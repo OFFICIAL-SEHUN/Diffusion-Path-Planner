@@ -1,0 +1,21 @@
+# model checkpoints
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.safetensors
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.dist/
+build/
+*.log
+.pytest_cache/
+.cache/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store

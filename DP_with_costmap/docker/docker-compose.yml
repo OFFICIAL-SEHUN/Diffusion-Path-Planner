@@ -1,0 +1,20 @@
+version: '3.8'
+services:
+  diffusion_planner:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    volumes:
+      - ../cost_aware_planner:/app
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: tail -f /dev/null
+    tty: true
+    stdin_open: true
+    privileged: true
+    restart: unless-stopped

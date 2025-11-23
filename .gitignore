@@ -5,6 +5,10 @@
 *.onnx
 *.safetensors
 
+# wandb
+wandb/
+**/wandb/
+
 # Python
 __pycache__/
 *.py[cod]

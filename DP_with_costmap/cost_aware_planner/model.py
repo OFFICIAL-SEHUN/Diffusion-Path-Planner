@@ -66,23 +66,49 @@ class ResnetBlock1D(nn.Module):
         h = self.block2(h)
         return h + self.res_conv(x)
 
+class VisualEncoder(nn.Module):
+    """
+    Costmap(이미지)을 처리하여 특징 벡터로 만드는 CNN
+    Input: [B, 1, 64, 64] -> Output: [B, 512]
+    """
+    def __init__(self, input_channels=1, feature_dim=512):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(input_channels, 32, 3, padding=1), # 64x64
+            nn.BatchNorm2d(32), nn.ReLU(),
+            nn.MaxPool2d(2),                             # 32x32
+            
+            nn.Conv2d(32, 64, 3, padding=1),
+            nn.BatchNorm2d(64), nn.ReLU(),
+            nn.MaxPool2d(2),                             # 16x16
+            
+            nn.Conv2d(64, 128, 3, padding=1),
+            nn.BatchNorm2d(128), nn.ReLU(),
+            nn.MaxPool2d(2),                             # 8x8
+            
+            nn.Conv2d(128, 256, 3, padding=1),
+            nn.BatchNorm2d(256), nn.ReLU(),
+            nn.AdaptiveAvgPool2d((1, 1)),                # [B, 256, 1, 1] -> 1x1로 압축
+            nn.Flatten(),                                # [B, 256]
+            nn.Linear(256, feature_dim),
+            nn.SiLU()
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
 class ConditionalPathModel(nn.Module):
-    """
-    Fixed 1D U-Net with correct Upsampling order
-    """
     def __init__(self, config):
         super().__init__()
         
-        self.transition_dim = 2 # (x, y)
-        
-        # [설정] 64x64 이미지를 펼치면 4096이 됩니다.
-        # 나중에 Visual Encoder를 쓰면 512 등으로 바꾸세요.
-        visual_input_dim = config.get('visual_emb_dim', 4096) 
-        
-        dim = 64 
+        self.transition_dim = 2
+        dim = 64
         time_dim = dim * 4
-
-        # 1. Embedding Setup
+        
+        # [수정] 시각 정보 처리를 위한 CNN Encoder 추가
+        self.visual_encoder = VisualEncoder(input_channels=1, feature_dim=dim*4)
+        
+        # Embedding Setup
         self.time_mlp = nn.Sequential(
             SinusoidalPositionEmbeddings(dim),
             nn.Linear(dim, time_dim),
@@ -90,90 +116,74 @@ class ConditionalPathModel(nn.Module):
             nn.Linear(time_dim, time_dim),
         )
         
-        # Waypoint 순서를 위한 Positional Embedding 추가
         self.pos_embed = SinusoidalPositionEmbeddings(dim)
         
-        self.cond_proj = nn.Sequential(
-            nn.Linear(visual_input_dim, time_dim),
-            nn.SiLU(),
-            nn.Linear(time_dim, time_dim)
-        )
-
-        # 2. Initial Conv
+        # [수정] cond_proj는 이제 필요 없거나, CNN 출력과 Time을 합치는 용도로 변경 가능
+        # 여기서는 visual_encoder가 이미 차원을 맞춰주므로 제거하거나 Identity 처리
+        
+        # ... (나머지 U-Net 구조 down1_block 등은 그대로 유지) ...
+        # 아래 부분은 그대로 복사해서 쓰시면 됩니다 (단, init_conv 등 정의 필요)
         self.init_conv = nn.Conv1d(self.transition_dim, dim, 7, padding=3)
-
-        # 3. Downsampling Path (Encoder)
-        # Level 1: 64 -> 64 (Save h1)
         self.down1_block = ResnetBlock1D(dim, dim, time_dim)
-        self.down1_pool = nn.Conv1d(dim, dim*2, 3, 2, 1) # Size / 2 (64->32)
-
-        # Level 2: 32 -> 32 (Save h2)
+        self.down1_pool = nn.Conv1d(dim, dim*2, 3, 2, 1)
         self.down2_block = ResnetBlock1D(dim*2, dim*2, time_dim)
-        self.down2_pool = nn.Conv1d(dim*2, dim*4, 3, 2, 1) # Size / 2 (32->16)
-
-        # 4. Middle Path (Bottleneck)
+        self.down2_pool = nn.Conv1d(dim*2, dim*4, 3, 2, 1)
         self.mid_block1 = ResnetBlock1D(dim*4, dim*4, time_dim)
         self.mid_block2 = ResnetBlock1D(dim*4, dim*4, time_dim)
-
-        # 5. Upsampling Path (Decoder)
-        # Level 2: 16 -> 32 -> Concat(h2) -> Block
-        self.up2_upsample = nn.ConvTranspose1d(dim*4, dim*2, 4, 2, 1) # Size * 2
+        self.up2_upsample = nn.ConvTranspose1d(dim*4, dim*2, 4, 2, 1)
         self.up2_block = ResnetBlock1D(dim*2 + dim*2, dim*2, time_dim)
-
-        # Level 1: 32 -> 64 -> Concat(h1) -> Block
-        self.up1_upsample = nn.ConvTranspose1d(dim*2, dim, 4, 2, 1) # Size * 2
+        self.up1_upsample = nn.ConvTranspose1d(dim*2, dim, 4, 2, 1)
         self.up1_block = ResnetBlock1D(dim + dim, dim, time_dim)
-
-        # 6. Final Output
         self.final_conv = nn.Conv1d(dim, self.transition_dim, 1)
 
     def forward(self, x, time, condition):
-        # [자동 수정] 입력 Condition이 이미지(3차원)라면 벡터(2차원)로 펼쳐줌
-        if len(condition.shape) > 2:
-            condition = condition.view(condition.size(0), -1)
+        # x: [B, H, 2] (Noisy Path)
+        # time: [B] (Timestep)
+        # condition: [B, H, W] 또는 [B, 1, H, W] (Costmap)
 
-        # Waypoint 순서를 위한 Positional Embedding 생성
-        horizon = x.shape[1]
-        pos = torch.arange(horizon, device=x.device).unsqueeze(0)
-        pos_emb = self.pos_embed(pos)
-        pos_emb = pos_emb.transpose(1, 2)
+        # ========== [여기부터 수정하세요] ==========
+        # 1. 입력 차원 검사 및 자동 수정
+        # 입력이 [Batch, Height, Width] (3차원)으로 들어오면 -> [Batch, 1, Height, Width] (4차원)으로 변경
+        if len(condition.shape) == 3:
+            condition = condition.unsqueeze(1)
+            
+        # 이제 차원이 4차원인지 확인 (안전장치)
+        if len(condition.shape) != 4:
+             raise ValueError(f"Condition shape mismatch. Expected [B, 1, H, W] or [B, H, W], got {condition.shape}")
+        # =========================================
 
-        # 1. Data & Embedding Prep
-        x = x.transpose(1, 2) # [B, H, 2] -> [B, 2, H]
+        # 2. 이미지 인코딩 (Visual Encoder 통과)
+        c = self.visual_encoder(condition) 
+
+        # 3. Data & Time Embedding
+        x = x.transpose(1, 2) # [B, 2, H]
         t = self.time_mlp(time)
-        c = self.cond_proj(condition)
+        
+        # Time Embedding + Image Feature 합치기
         emb = t + c 
 
-        # 2. Initial
+
+        # 3. Positional Embedding
+        horizon = x.shape[2]
+        pos = torch.arange(horizon, device=x.device).unsqueeze(0)
+        pos_emb = self.pos_embed(pos).transpose(1, 2) # [1, dim, H]
+
         x = self.init_conv(x)
+        x = x + pos_emb # [B, dim, H]
 
-        # Positional Embedding 더하기
-        x = x + pos_emb
-
-        # 3. Downstream
-        # Level 1
-        h1 = self.down1_block(x, emb) # Save for skip connection (Size 64)
-        x = self.down1_pool(h1)       # Downsample (Size 32)
-
-        # Level 2
-        h2 = self.down2_block(x, emb) # Save for skip connection (Size 32)
-        x = self.down2_pool(h2)       # Downsample (Size 16)
-
-        # 4. Middle
+        # ... (이후 U-Net 통과 과정은 기존 코드와 동일) ...
+        h1 = self.down1_block(x, emb)
+        x = self.down1_pool(h1)
+        h2 = self.down2_block(x, emb)
+        x = self.down2_pool(h2)
         x = self.mid_block1(x, emb)
         x = self.mid_block2(x, emb)
-
-        # 5. Upstream (반드시 Up -> Concat -> Block 순서여야 함)
-        # Level 2 Recovery
-        x = self.up2_upsample(x)      # 16 -> 32
-        x = torch.cat((x, h2), dim=1) # Concat with h2 (Size 32)
+        x = self.up2_upsample(x)
+        x = torch.cat((x, h2), dim=1)
         x = self.up2_block(x, emb)
-
-        # Level 1 Recovery
-        x = self.up1_upsample(x)      # 32 -> 64
-        x = torch.cat((x, h1), dim=1) # Concat with h1 (Size 64)
+        x = self.up1_upsample(x)
+        x = torch.cat((x, h1), dim=1)
         x = self.up1_block(x, emb)
-
-        # 6. Final
         x = self.final_conv(x)
-        return x.transpose(1, 2) # [B, 2, H] -> [B, H, 2]
+        
+        return x.transpose(1, 2)

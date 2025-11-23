@@ -6,7 +6,7 @@ seed: 42
 data:
   num_samples: 1000       # Number of map/path pairs to pre-generate for the dataset
   img_size: 64           # Image size (height and width)
-  horizon: 64            # Number of points in the trajectory
+  horizon: 128            # Number of points in the trajectory
   sample_per_epoch: 1000  # Number of samples to generate per epoch
   cost_weight: 50.0      # 'w' parameter for cost-aware A* (balances safety vs. length)
 
@@ -29,14 +29,14 @@ model:
   
 # --- Training ---
 training:
-  epochs: 50
+  epochs: 1000
   batch_size: 32
   learning_rate: 0.0001
   # Add checkpointing and logging paths
   checkpoint_dir: "checkpoints"
-  model_name: "epoch_10_cost_aware_dipper.pth"
+  model_name: "epoch_500_model.pt"
   # Logging interval
-  log_interval: 10
+  log_interval: 500
 
 # --- Inference ---
 inference:

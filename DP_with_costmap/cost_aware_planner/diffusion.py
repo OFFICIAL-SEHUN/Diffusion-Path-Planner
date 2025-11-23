@@ -38,49 +38,68 @@ class DiffusionScheduler:
         return xt, noise
 
     @torch.no_grad()
-    def sample(self, model, condition, shape):
+    def sample(self, model, condition, shape, start_pos=None, end_pos=None):
         """
-        Performs the full reverse diffusion process (sampling) to generate a new sample.
         Args:
-            model (nn.Module): The trained noise prediction model.
-            condition (torch.Tensor): The conditioning information (e.g., a costmap).
-            shape (tuple): The shape of the desired output tensor (batch, horizon, 2).
-        Returns:
-            torch.Tensor: The generated data sample (e.g., a trajectory).
+            ...
+            start_pos (torch.Tensor): [B, 2] Start coordinates (normalized)
+            end_pos (torch.Tensor): [B, 2] End coordinates (normalized)
         """
         model.eval()
         
-        # Start with pure Gaussian noise
+        # 1. 랜덤 노이즈로 시작
         x = torch.randn(shape, device=self.device)
         
         for i in tqdm(reversed(range(0, self.timesteps)), desc="Sampling", total=self.timesteps):
-            t = torch.full((shape[0],), i, device=self.device, dtype=torch.long)
+            # [수정] 매 스텝 시작 전에 Start/End를 강제로 고정 (In-painting)
+            if start_pos is not None and end_pos is not None:
+                # 현재 시점(i)에 맞는 노이즈 레벨을 계산해서 Start/End에 섞어줌
+                # (x0 상태의 start/end를 그냥 박으면 안됨, 노이즈가 껴있어야 함)
+                
+                # 원본 start/end (Batch, 1, 2)
+                current_start = start_pos.unsqueeze(1) 
+                current_end = end_pos.unsqueeze(1)
+                
+                if i > 0: # 마지막 스텝이 아니면 노이즈 추가
+                    noise_s = torch.randn_like(current_start)
+                    noise_e = torch.randn_like(current_end)
+                    
+                    # q_sample 공식 (forward process) 사용
+                    # sqrt_alpha_cumprod * x0 + sqrt(1-alpha_cumprod) * epsilon
+                    
+                    # scalar 값 추출
+                    s_alpha = self.sqrt_alphas_cumprod[i]
+                    s_one_minus_alpha = self.sqrt_one_minus_alphas_cumprod[i]
+                    
+                    current_start = s_alpha * current_start + s_one_minus_alpha * noise_s
+                    current_end = s_alpha * current_end + s_one_minus_alpha * noise_e
+
+                # x의 첫번째 점과 마지막 점을 강제로 교체
+                x[:, 0, :] = current_start.squeeze(1)
+                x[:, -1, :] = current_end.squeeze(1)
+
+            # ---------------------------------------------------------
             
-            # Predict noise
+            t = torch.full((shape[0],), i, device=self.device, dtype=torch.long)
             predicted_noise = model(x, t, condition)
             
-            # --- Debug: Check for NaNs from the model ---
-            if torch.isnan(predicted_noise).any():
-                print(f"!!! NaN DETECTED in predicted_noise at timestep {i} !!!")
-                # The model is likely unstable. Further sampling is pointless.
-                return x # Return the current tensor to show where it failed
-            
-            # Denoise one step using the DDPM formula
+            # (기존 Denoising 로직 유지)
             alpha_t = self.alphas[t][:, None, None]
             alpha_cumprod_t = self.alphas_cumprod[t][:, None, None]
             beta_t = self.betas[t][:, None, None]
             
-            # --- Modified Denoising Step for Stability ---
-            # The original formula can be unstable when alpha_cumprod_t is close to 1.
-            # We add a small epsilon to the denominator to prevent division by zero.
             epsilon = 1e-8
             term1 = 1 / torch.sqrt(alpha_t)
             term2 = (beta_t / torch.sqrt(1 - alpha_cumprod_t + epsilon)) * predicted_noise
             x = term1 * (x - term2)
             
-            # Add noise back in if not the last step
             if i > 0:
                 z = torch.randn_like(x)
                 x += torch.sqrt(beta_t) * z
-                
+        
+        # 마지막으로 한번 더 고정 (노이즈 없는 원본 좌표)
+        if start_pos is not None and end_pos is not None:
+            x[:, 0, :] = start_pos
+            x[:, -1, :] = end_pos
+            
         return x

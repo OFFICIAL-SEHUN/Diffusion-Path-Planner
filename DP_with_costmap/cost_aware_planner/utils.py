@@ -53,7 +53,7 @@ def plot_results(costmap, generated_path, true_path, config):
     plt.figure(figsize=(10, 10))
     
     # 1. Define the desired colormap: low values (0.0) should be bright (yellow).
-    cmap = cm.get_cmap('viridis_r').copy()
+    cmap = cm.get_cmap('plasma_r').copy()
     cmap.set_bad(color='black')
     masked_costmap = np.ma.masked_invalid(costmap_np)
 
@@ -61,7 +61,7 @@ def plot_results(costmap, generated_path, true_path, config):
     plt.imshow(masked_costmap, cmap=cmap, origin='lower', vmin=0, vmax=1.0)
     
     # Plot original generated path (pre-smoothing)
-    plt.plot(gen_path_scaled[:, 1], gen_path_scaled[:, 0], 'r:', alpha=0.6, label='Original Generated Path')
+    plt.plot(gen_path_scaled[:, 1], gen_path_scaled[:, 0], 'k-', alpha=0.6, label='Original Generated Path')
     
     # Plot the smoothed path
     plt.plot(smoothed_path[:, 1], smoothed_path[:, 0], 'c-', linewidth=2.5, label='Smoothed Path (Kalman)')

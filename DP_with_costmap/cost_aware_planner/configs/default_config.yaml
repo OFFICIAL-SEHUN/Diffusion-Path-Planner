@@ -34,7 +34,7 @@ training:
   learning_rate: 0.0001
   # Add checkpointing and logging paths
   checkpoint_dir: "checkpoints"
-  model_name: "epoch_500_model.pt"
+  model_name: "epoch_1000_epoch_500_model.pt"
   # Logging interval
   log_interval: 500
 

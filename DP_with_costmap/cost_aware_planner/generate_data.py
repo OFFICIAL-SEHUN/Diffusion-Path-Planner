@@ -10,7 +10,7 @@ And save the data to a .pt file.
 """
 
 # --- 설정 ---
-NUM_SAMPLES = 10      # 생성할 데이터 개수 (원하는 만큼 조절)
+NUM_SAMPLES = 30000      # 생성할 데이터 개수 (원하는 만큼 조절)
 IMG_SIZE = 64            # 맵 크기
 HORIZON = 128            # 경로 길이 (모델 입력 크기)
 SCALE = 4                # Maze Scale

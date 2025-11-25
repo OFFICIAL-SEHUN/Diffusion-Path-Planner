@@ -103,3 +103,4 @@ class DiffusionScheduler:
             x[:, -1, :] = end_pos
             
         return x
+

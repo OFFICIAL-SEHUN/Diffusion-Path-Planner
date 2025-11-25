@@ -126,9 +126,8 @@ class Trainer:
                     fig, ax = plt.subplots(figsize=(5, 5))
                     
                     cmap_img = test_costmap.squeeze().cpu().numpy()
-                    # [TIP] 보라색이 길(0), 노란색이 벽(1)인 기본 viridis 대신
-                    # 보기 편하게 viridis_r (반전) 또는 gray_r (흑백 반전) 사용 추천
-                    ax.imshow(cmap_img, cmap='viridis_r') 
+            
+                    ax.imshow(cmap_img, cmap='plasma_r') 
                     
                     h, w = cmap_img.shape
                     gen_pts = generated_path.squeeze().cpu().numpy()

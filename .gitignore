@@ -24,5 +24,7 @@ build/
 .vscode/
 .DS_Store
 
-# results
 results/
+results_guidance/
+data/
+checkpoints/

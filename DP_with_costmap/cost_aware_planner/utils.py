@@ -58,13 +58,13 @@ def plot_results(costmap, generated_path, true_path, config):
     masked_costmap = np.ma.masked_invalid(costmap_np)
 
     # 2. Display the costmap image using this colormap.
-    plt.imshow(masked_costmap, cmap=cmap, origin='lower', vmin=0, vmax=1.0)
+    plt.imshow(masked_costmap, cmap=cmap, origin='upper', vmin=0, vmax=1.0)
     
     # Plot original generated path (pre-smoothing)
-    plt.plot(gen_path_scaled[:, 1], gen_path_scaled[:, 0], 'k-', alpha=0.6, label='Original Generated Path')
+    plt.plot(gen_path_scaled[:, 1], gen_path_scaled[:, 0], 'k-', linewidth=4, alpha=0.6, label='Original Generated Path')
     
     # Plot the smoothed path
-    plt.plot(smoothed_path[:, 1], smoothed_path[:, 0], 'c-', linewidth=2.5, label='Smoothed Path (Kalman)')
+    # plt.plot(smoothed_path[:, 1], smoothed_path[:, 0], 'c-', linewidth=2.5, label='Smoothed Path (Kalman)')
     
     # Plot the ground truth path
     if true_path_scaled.size > 0:
@@ -81,7 +81,7 @@ def plot_results(costmap, generated_path, true_path, config):
     plt.legend()
     plt.title("Diffusion Path Planner on Costmap")
     plt.xlim(0, img_size)
-    plt.ylim(0, img_size)
+    plt.ylim(img_size, 0)
     plt.grid(True, which='both', linestyle='--', linewidth=0.5)
     
     # 3. Create a colorbar that is explicitly managed to ensure correctness.

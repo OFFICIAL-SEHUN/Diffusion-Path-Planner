@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  diffusion_planner:
+    image: diffusion_planner_3d_costmap:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    
+    container_name: diffusion_planner_3d_costmap
+
+    environment:
+      - DISPLAY=${DISPLAY}
+      - MPLBACKEND=TkAgg
+      - QT_X11_NO_MITSHM=1
+
+    volumes:
+      - ./3D_costmap:/workspace
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+    stdin_open: true
+    tty: true

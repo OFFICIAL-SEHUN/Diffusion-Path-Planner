@@ -11,7 +11,7 @@ import time
 # 프로젝트 모듈
 from maze import MazeGenerator, a_star_search
 from model import ConditionalPathModel
-from guidance_diffsion import DiffusionScheduler
+from guidance_diffusion import DiffusionScheduler
 
 def set_seed(seed):
     random.seed(seed)

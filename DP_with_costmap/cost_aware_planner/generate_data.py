@@ -10,13 +10,13 @@ And save the data to a .pt file.
 """
 
 # --- 설정 ---
-NUM_SAMPLES = 30000      # 생성할 데이터 개수 (원하는 만큼 조절)
+NUM_SAMPLES = 1000      # 생성할 데이터 개수 (원하는 만큼 조절)
 IMG_SIZE = 64            # 맵 크기
 HORIZON = 128            # 경로 길이 (모델 입력 크기)
 SCALE = 4                # Maze Scale
-COST_WEIGHT = 15.0       # Cost-aware A* 가중치 (main.py와 유사한 값 사용)
+COST_WEIGHT = 20.0       # Cost-aware A* 가중치 (main.py와 유사한 값 사용)
 SAVE_DIR = "data"        # 저장할 폴더
-SAVE_NAME = "dataset.pt" # 저장할 파일명
+SAVE_NAME = "dataset_validation.pt" # 저장할 파일명
 
 def generate_and_save():
     if not os.path.exists(SAVE_DIR):

@@ -40,11 +40,12 @@ def visualize_dataset_sample(data_path="data/dataset.pt", save_path="results/dat
     # Mask invalid values (like infinity) for correct color mapping
     masked_costmap = np.ma.masked_invalid(costmap_sample)
     
-    plt.imshow(masked_costmap, cmap=cmap, origin='lower', vmin=0.0, vmax=1.0)
+    plt.imshow(masked_costmap, cmap=cmap, origin='upper', vmin=0.0, vmax=1.0)
     
     # Plot the path
     # path is (row, col) which corresponds to (y, x)
     plt.plot(path_sample_scaled[:, 1], path_sample_scaled[:, 0], 'r-', linewidth=2, label='Path')
+
 
     # Mark start and end points
     plt.scatter(path_sample_scaled[0, 1], path_sample_scaled[0, 0], c='purple', marker='o', s=100, label='Start', zorder=5)

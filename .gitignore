@@ -28,3 +28,17 @@ results/
 results_guidance/
 data/
 checkpoints/
+
+*.png
+*.pfm
+*.jpeg
+*.gif
+*.bmp
+*.tiff
+*.ico
+*.webp
+*.svg
+*.eps
+*.pdf
+*.docx
+*.doc

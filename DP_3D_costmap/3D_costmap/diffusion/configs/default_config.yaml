@@ -1,0 +1,64 @@
+# =============================================================================
+# Diffusion-based Path Planning for Gradient Terrain
+# Configuration File
+# =============================================================================
+
+# --- General Settings ---
+project_name: "GradientTerrainDiffusionPlanner"
+seed: 42  # Random seed for reproducibility
+
+# --- Data Generation ---
+data:
+  num_samples: 10000        # Number of terrains to generate
+  paths_per_terrain: 5      # Number of different paths per terrain (total paths = num_samples × paths_per_terrain)
+  img_size: 100            # Terrain map size (height and width in pixels)
+  horizon: 180            # Number of waypoints in trajectory
+  # sample_per_epoch: 5000  # Samples to use per training epoch
+  cost_weight: 50.0       # Weight for energy cost in path planning (not used in gradient mode)
+
+# --- Gradient Terrain Generation ---
+gradient:
+  height_range: [0, 10]                    # Height range in meters (min, max)
+  terrain_scales: [[10, 7], [5, 7], [30, 2]]  # Multi-scale noise [(scale, weight), ...]
+  # friction_range: [0.05, 0.3]             # Friction coefficient range (asphalt ~ mud/sand)
+  # friction_smooth: 10                      # Gaussian smoothing sigma for friction map
+  mass: 10.0                               # Robot mass in kg
+  gravity: 9.8                             # Gravity acceleration in m/s^2
+  limit_angle_deg: 30                      # Maximum climbable angle in degrees
+
+# --- Diffusion Process ---
+diffusion:
+  timesteps: 200          # Number of diffusion steps (T)
+  beta_start: 0.0001      # Initial noise level (β_1)
+  beta_end: 0.02          # Final noise level (β_T)
+  # Linear schedule: β_t increases linearly from beta_start to beta_end
+
+# --- Model Architecture ---
+model:
+  # U-Net based conditional diffusion model
+  base_dim: 64            # Base channel dimension
+  time_embed_dim: 256     # Time embedding dimension
+  image_feat_dim: 256     # Visual encoder output dimension
+  # Visual encoder: CNN that processes gradient terrain costmap
+  # Conditioning: Time + Visual features combined
+
+# --- Training Configuration ---
+training:
+  epochs: 10000             # Total training epochs (감소: 100000→2000, 데이터 많아짐)
+  batch_size: 64            # Batch size (증가: 32→64)
+  learning_rate: 0.0003     # Adam optimizer learning rate (증가: 0.0001→0.0003)
+  
+  # Checkpointing
+  checkpoint_dir: "checkpoints"
+  model_name: "epoch_10000_gradient_path_model.pt"  # Final model filename (새 버전)
+  
+  # Logging
+  log_interval: 10000        # Save checkpoint and visualize every N epochs (감소: 50000→200)
+  # WandB project: "diffusion-gradient-path-planning"
+
+# --- Inference Configuration ---
+inference:
+  # Sampling settings
+  show_progress: true     # Show tqdm progress bar during sampling
+  # Inpainting: Start/end positions are fixed during sampling
+  # Model checkpoint will be loaded from: checkpoint_dir/model_name

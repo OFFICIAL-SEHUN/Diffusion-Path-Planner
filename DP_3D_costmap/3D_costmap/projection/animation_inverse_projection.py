@@ -12,6 +12,7 @@ class DualViewMappingSim:
         # 전역 지도 (Global Map)
         self.global_map = np.ones((self.grid_dim, self.grid_dim)) * 0.5 
         self.visited_mask = np.zeros((self.grid_dim, self.grid_dim), dtype=bool)
+        self.visit_count = np.zeros((self.grid_dim, self.grid_dim), dtype=float)
 
         # --- GT 경로 생성 ---
         num_frames = 150
@@ -129,7 +130,10 @@ class DualViewMappingSim:
         local_x = dx * cos_a + dy * sin_a
         local_y = -dx * sin_a + dy * cos_a
         
-        valid_mask = (local_x > 0.5) & (local_x < self.cam_max_range)
+        fov_angle = np.abs(np.arctan2(local_y, local_x))
+        fov_margin = 0.85
+        valid_mask = ((local_x > 0.5) & (local_x < self.cam_max_range)
+                      & (fov_angle < self.cam_fov_rad / 2 * fov_margin))
         if not np.any(valid_mask): return
 
         valid_lx = local_x[valid_mask]
@@ -157,12 +161,20 @@ class DualViewMappingSim:
         vals = observed_vals[not_nan]
         
         current_vals = self.global_map[target_iy, target_ix]
+        current_count = self.visit_count[target_iy, target_ix]
         visited = self.visited_mask[target_iy, target_ix]
-        
-        new_vals = current_vals * 0.2 + vals * 0.8
-        new_vals[~visited] = vals[~visited] 
-        
+
+        dist = np.sqrt((target_ix * self.grid_res - rx)**2
+                       + (target_iy * self.grid_res - ry)**2)
+        confidence = np.clip(1.0 - dist / self.cam_max_range, 0.1, 1.0)
+
+        new_count = current_count + confidence
+        new_vals = np.where(visited,
+                            (current_vals * current_count + vals * confidence) / new_count,
+                            vals)
+
         self.global_map[target_iy, target_ix] = new_vals
+        self.visit_count[target_iy, target_ix] = new_count
         self.visited_mask[target_iy, target_ix] = True
 
     def animate(self):

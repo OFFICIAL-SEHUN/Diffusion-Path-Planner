@@ -9,22 +9,31 @@ seed: 42
 
 # --- Data Generation ---
 data:
-  num_samples: 10000        # Number of terrains to generate
-  paths_per_terrain: 5      # Number of different paths per terrain (total paths = num_samples × paths_per_terrain)
+  num_samples: 100       # Number of terrains to generate
+  paths_per_terrain: 100      # Number of different paths per terrain (total paths = num_samples × paths_per_terrain)
   img_size: 100            # Terrain map size (height and width in pixels)
   horizon: 120            # Number of waypoints in trajectory
   # sample_per_epoch: 5000  # Samples to use per training epoch
   cost_weight: 50.0       # Weight for energy cost in path planning (not used in gradient mode)
+  min_distance_factor: 1.0  # 시작/끝 지점 최소 거리 (img_size / min_distance_factor)
+                            # 높을수록 더 가까이 배치 가능, 낮을수록 더 멀리 배치 (더 긴 경로 생성)
+                            # 1.5 = img_size의 약 67% 이상 거리
 
 # --- Gradient Terrain Generation ---
 gradient:
   height_range: [0, 5]                    # Height range in meters (min, max) - 증가로 경사 증가
   # terrain_scales: [[scale, weight], ...] - 큰 weight = 급격한 높이 변화
-  terrain_scales: [[8, 2],[5,5]]  # (smoothness, height_variation)
+  terrain_scales: [ [80, 50],[8,10],[10, 5], [5, 2]]  # (smoothness, height_variation)
+  # terrain_scales: [[10,5]]  # (smoothness, height_variation)
   mass: 10.0                               # Robot mass in kg
   gravity: 9.8                             # Gravity acceleration in m/s^2
-  limit_angle_deg: 35                      # Maximum climbable angle in degrees (증가)
+  limit_angle_deg: 20                      # Maximum climbable angle in degrees (증가)
   pixel_resolution: 0.5                    # Pixel resolution in m/pixel (100 pixels = 50m)
+  max_iterations: 10000                   # Maximum number of iterations for A* search
+  pca_linearity_threshold: 0.85           # PCA 선형성 검사 임계값 (0.85 = 85%)
+                                           # 첫 번째 주성분 분산 비율이 이 값 이상이면 경로 거부
+                                           # 낮을수록 더 엄격하게 직선 경로 거부 (구불구불한 경로 선호)
+                                           # 0.85 = 직선 경로를 더 많이 거부하여 곡선 경로 생성
 
 # --- Diffusion Process ---
 diffusion:

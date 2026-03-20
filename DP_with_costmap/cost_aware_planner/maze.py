@@ -1,3 +1,4 @@
+import sys
 import numpy as np
 import random
 from scipy.ndimage import distance_transform_edt
@@ -24,7 +25,20 @@ class MazeGenerator:
         # --- Maze Grid Generation ---
         start_node = (0, 0)
         self.grid = np.zeros((self.height, self.width))
-        self._recursive_backtracking(start_node)
+        # Use iterative DFS for large grids to avoid RecursionError (Python default limit ~1000)
+        if self.height * self.width > 500:
+            self._iterative_backtracking(start_node)
+        else:
+            try:
+                self._recursive_backtracking(start_node)
+            except RecursionError:
+                limit = sys.getrecursionlimit()
+                print(
+                    f"[MazeGenerator] RecursionError: grid={self.height}x{self.width} (img_size={self.img_size}, scale={self.scale}), "
+                    f"recursion limit={limit}. Falling back to iterative DFS."
+                )
+                self.grid = np.zeros((self.height, self.width))
+                self._iterative_backtracking(start_node)
 
         # 1) 구조 만들기
         costmap_structure_small = np.kron(self.grid, np.ones((self.scale, self.scale)))
@@ -104,8 +118,9 @@ class MazeGenerator:
         return self.costmap, path_normalized, start_pos, end_pos
 
     def _recursive_backtracking(self, pos):
+        """Recursive DFS for small grids. Use _iterative_backtracking for large grids to avoid RecursionError."""
         r, c = pos
-        self.grid[r, c] = 1 
+        self.grid[r, c] = 1
         neighbors = [(r - 2, c), (r + 2, c), (r, c - 2), (r, c + 2)]
         random.shuffle(neighbors)
         for next_r, next_c in neighbors:
@@ -113,6 +128,30 @@ class MazeGenerator:
                 wall_r, wall_c = (r + next_r) // 2, (c + next_c) // 2
                 self.grid[wall_r, wall_c] = 1
                 self._recursive_backtracking((next_r, next_c))
+
+    def _iterative_backtracking(self, start_pos):
+        """Stack-based DFS: same logic as recursive but safe for large grids (e.g. 256+, scale 4)."""
+        stack = [start_pos]
+        self.grid[start_pos[0], start_pos[1]] = 1
+        
+        while stack:
+            r, c = stack[-1]  # Peek at top (don't pop yet for backtracking)
+            neighbors = [(r - 2, c), (r + 2, c), (r, c - 2), (r, c + 2)]
+            random.shuffle(neighbors)
+            
+            found_unvisited = False
+            for next_r, next_c in neighbors:
+                if 0 <= next_r < self.height and 0 <= next_c < self.width and self.grid[next_r, next_c] == 0:
+                    # Carve path: mark wall and next cell
+                    wall_r, wall_c = (r + next_r) // 2, (c + next_c) // 2
+                    self.grid[wall_r, wall_c] = 1
+                    self.grid[next_r, next_c] = 1
+                    stack.append((next_r, next_c))
+                    found_unvisited = True
+                    break  # Continue DFS from this new cell
+            
+            if not found_unvisited:
+                stack.pop()  # Backtrack if no unvisited neighbors
 
 def a_star_search(costmap, start, end, cost_weight=20.0):
     rows, cols = costmap.shape

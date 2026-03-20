@@ -6,7 +6,7 @@ import random
 import numpy as np
 import time
 
-from generate_data import SlopeCotGenerator, normalize_costmap
+from generate_data import SlopeCotGenerator
 from data_loader import GradientDataset
 from model import ConditionalPathModel
 from diffusion import DiffusionScheduler
@@ -14,7 +14,7 @@ from trainer import Trainer
 from utils import plot_results
 
 """
-Diffusion-based Path Planning with Slope + CoT
+Diffusion-based Path Planning with Slope + Height
 Main entry point for training and inference.
 Uses Cost of Transport (CoT) based on terrain slope only.
 """
@@ -41,7 +41,7 @@ def main(args):
         args: Command line arguments
     """
     print("\n" + "="*60)
-    print("Diffusion Path Planning with Slope + CoT")
+    print("Diffusion Path Planning with Slope + Height")
     print("="*60 + "\n")
     
     # --- Load Configuration ---
@@ -116,81 +116,122 @@ def main(args):
             print(f"An error occurred while loading the model: {e}")
             return
             
-        # --- Generate New Slope + CoT Terrain ---
-        print("Generating new slope-based CoT terrain for inference...")
-        print("  → Diffusion input: Slope + CoT (2-channel map)")
-        print("  → GT generation: CoT-based A* search")
+        # --- Generate New Slope + Height Terrain ---
+        print("Generating new slope + height terrain for inference...")
+        print("Diffusion input: Slope + Height (2-channel map)")
+        print("GT generation: CoT-based A* search")
         
         img_size = config['data']['img_size']
         terrain_generator = SlopeCotGenerator(
             img_size=img_size,
-            height_range=(0, 10),
-            mass=10.0,
-            gravity=9.8,
-            limit_angle_deg=30
+            height_range=tuple(config['gradient']['height_range']),
+            mass=config['gradient']['mass'],
+            gravity=config['gradient']['gravity'],
+            limit_angle_deg=config['gradient']['limit_angle_deg']
         )
         
         # Generate terrain (slope map for input, CoT for A* search)
-        # ✅ Random terrain generation for robustness testing
-        # Use None to generate diverse terrains (same as training augmentation)
-        h_map, s_map, cot_costmap = terrain_generator.generate(
-            terrain_scales=None  # Random terrain for better generalization test
-        )
-        
-        # Select random start/end positions with minimum distance guarantee
-        margin = img_size // 10
-        min_distance = img_size // 2  # Minimum distance: 1/2 of map size
-        
-        max_attempts = 100
-        for attempt in range(max_attempts):
-            start_pos = (np.random.randint(margin, img_size - margin),
-                        np.random.randint(margin, img_size - margin))
-            goal_pos = (np.random.randint(margin, img_size - margin),
-                       np.random.randint(margin, img_size - margin))
+        # Use config terrain_scales if provided, otherwise random generation
+        # Retry until we get a reasonable terrain
+        config_terrain_scales = config['gradient'].get('terrain_scales', None)
+        max_terrain_attempts = 50
+        for terrain_attempt in range(max_terrain_attempts):
+            h_map, s_map = terrain_generator.generate(
+                terrain_scales=config_terrain_scales  # Use config or random (None)
+            )
             
-            # Calculate Euclidean distance
-            distance = np.sqrt((start_pos[0] - goal_pos[0])**2 + 
-                             (start_pos[1] - goal_pos[1])**2)
+            # Terrain difficulty filtering (same as training data generation)
+            slope_degrees = np.degrees(s_map)
+            mean_slope = np.mean(slope_degrees)
+            max_slope = np.max(slope_degrees)
+            steep_ratio = np.sum(slope_degrees > 30.0) / slope_degrees.size
             
-            if distance >= min_distance:
+            # inference를 위한 난이도 필터링
+            if (10.0 <= mean_slope <= 30.0 and 
+                max_slope <= 30.0 and 
+                steep_ratio <= 0.35):
+                print(f"✓ Generated terrain (attempt {terrain_attempt + 1}):")
+                print(f"  Mean slope: {mean_slope:.2f}°")
+                print(f"  Max slope: {max_slope:.2f}°")
+                print(f"  Steep ratio: {steep_ratio*100:.1f}%")
                 break
+        else:
+            print("Warning: Could not generate suitable terrain after max attempts")
+            print(f"Using last generated terrain (mean slope: {mean_slope:.2f}°)")
         
-        print(f"Start position: {start_pos}")
-        print(f"Goal position: {goal_pos}")
-        print(f"Distance between start and goal: {distance:.1f} pixels")
+        # --- Select Valid Start/Goal and Calculate A* Path ---
+        # Try multiple times to find a valid start/goal with A* path
+        margin = img_size // 10
+        min_distance = img_size // 2
+        max_slope_for_start_goal = 30.0  # Only pick start/goal from gentle slopes (increased)
         
-        # --- Calculate CoT-Efficient Path using A* ---
-        print(f"Calculating A* CoT-efficient path...")
-        true_path_pixels = terrain_generator.find_path(start_pos, goal_pos)
+        true_path_pixels = None
+        max_path_attempts = 50
+        
+        print(f"\nSearching for valid start/goal positions with A* path...")
+        for path_attempt in range(max_path_attempts):
+            # Try to find positions on gentle slopes
+            for position_attempt in range(100):
+                start_pos = (np.random.randint(margin, img_size - margin),
+                            np.random.randint(margin, img_size - margin))
+                goal_pos = (np.random.randint(margin, img_size - margin),
+                           np.random.randint(margin, img_size - margin))
+                
+                # Check if start/goal are on traversable slopes
+                start_slope = slope_degrees[start_pos]
+                goal_slope = slope_degrees[goal_pos]
+                
+                if start_slope > max_slope_for_start_goal or goal_slope > max_slope_for_start_goal:
+                    continue
+                
+                # Calculate Euclidean distance
+                distance = np.sqrt((start_pos[0] - goal_pos[0])**2 + 
+                                 (start_pos[1] - goal_pos[1])**2)
+                
+                if distance >= min_distance:
+                    break
+            else:
+                continue  # Couldn't find valid positions
+            
+            # Try A* pathfinding
+            true_path_pixels = terrain_generator.find_path(start_pos, goal_pos)
+            
+            if true_path_pixels is not None and len(true_path_pixels) > 0:
+                print(f"✓ Found valid path (attempt {path_attempt + 1}):")
+                print(f"  Start: {start_pos} (slope: {start_slope:.1f}°)")
+                print(f"  Goal:  {goal_pos} (slope: {goal_slope:.1f}°)")
+                print(f"  Distance: {distance:.1f} pixels")
+                print(f"  Path length: {len(true_path_pixels)} points")
+                break
+        else:
+            print(f"⚠️  Warning: Could not find A* path after {max_path_attempts} attempts")
+            print(f"   Using last attempted start/goal (inference will proceed without GT)")
         
         # Prepare ground truth path
         true_path = None
         if true_path_pixels is not None and len(true_path_pixels) > 0:
-            print(f"A* found path with {len(true_path_pixels)} points")
             # Convert path to tensor and normalize [-1, 1]
             true_path_np = np.array(true_path_pixels, dtype=np.float32)
             # ✅ (row, col) → (x, y) = (col, row) 반전
             true_path_np = true_path_np[:, [1, 0]]
             true_path_norm = (true_path_np / img_size) * 2 - 1
             true_path = torch.from_numpy(true_path_norm).float().to(device).unsqueeze(0)
-        else:
-            print("Warning: A* could not find a path.")
 
         # --- Prepare Inputs for Model ---
         
-        # Create 2-channel input: [Slope map, CoT map]
+        # Create 2-channel input: [Slope map, Height map]
         slope_degrees = np.degrees(s_map)  # 라디안 → 도
         slope_norm = slope_degrees / 90.0  # [0, 90°] → [0, 1] 정규화
         
-        # Normalize CoT costmap (같은 방식으로 Inf 처리)
-        cot_norm = normalize_costmap(cot_costmap)  # ✅ Training과 동일한 정규화
+        # Normalize Height map (same as training data generation)
+        height_norm = (h_map - h_map.min()) / (h_map.max() - h_map.min() + 1e-8)  # [0, 1]
         
-        # Stack as 2 channels: [Slope, CoT]
-        costmap_norm = np.stack([slope_norm, cot_norm], axis=0)  # [2, H, W]
+        # Stack as 2 channels: [Slope, Height]
+        costmap_norm = np.stack([slope_norm, height_norm], axis=0)  # [2, H, W]
         
         print(f"\n2-channel input statistics:")
-        print(f"  Slope - Min: {slope_degrees.min():.2f}°, Max: {slope_degrees.max():.2f}°")
-        print(f"  CoT   - Min: {cot_costmap.min():.2f}, Max: {cot_costmap.max():.2f}")
+        print(f"  Slope  - Min: {slope_degrees.min():.2f}°, Mean: {slope_degrees.mean():.2f}°, Max: {slope_degrees.max():.2f}°")
+        print(f"  Height - Min: {h_map.min():.2f}m, Mean: {h_map.mean():.2f}m, Max: {h_map.max():.2f}m")
         
         # Check for NaN values
         if np.isnan(costmap_norm).any():
@@ -213,9 +254,9 @@ def main(args):
         start_tensor = torch.from_numpy(norm_start).float().to(device).unsqueeze(0)
         goal_tensor = torch.from_numpy(norm_goal).float().to(device).unsqueeze(0)
         
-        print(f"\nNormalized coordinates:")
-        print(f"  Start: {norm_start}")
-        print(f"  Goal:  {norm_goal}")
+        print(f"\nNormalized coordinates for model:")
+        print(f"  Start: {norm_start} (pixel: {start_pos})")
+        print(f"  Goal:  {norm_goal} (pixel: {goal_pos})")
         
         # --- Run Diffusion Sampling ---
         print(f"\nRunning diffusion sampling with inpainting...")
@@ -245,7 +286,8 @@ def main(args):
         
         # --- Visualize Results ---
         print("Creating visualization...")
-        plot_results(costmap_tensor, generated_path, true_path, config, slope_map=s_map)
+        plot_results(costmap_tensor, generated_path, true_path, config, 
+                    slope_map=s_map, height_map=h_map)
         print("Inference complete!\n")
         
     elif args.mode == 'check_train':
@@ -290,7 +332,7 @@ def main(args):
             return
 
         # Extract start/end positions
-        # 데이터가 이미 (x, y) 형식으로 저장되어 있음 ✅
+        # 데이터 (x, y) 형식으로 저장
         start_data = true_path_data[0]    # [2] - (x, y)
         end_data = true_path_data[-1]     # [2] - (x, y)
 

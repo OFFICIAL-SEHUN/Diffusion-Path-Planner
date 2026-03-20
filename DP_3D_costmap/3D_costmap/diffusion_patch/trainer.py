@@ -109,14 +109,23 @@ class Trainer:
 
             # Iterate over batches
             pbar = tqdm(self.dataloader, desc=f"Epoch {epoch+1}/{epochs}")
-            for costmaps, paths in pbar:
+            for batch in pbar:
+                # Handle both old format (costmaps, paths) and new format (costmaps, paths, text_tokens)
+                if len(batch) == 2:
+                    costmaps, paths = batch
+                    text_tokens = None  # No text tokens
+                else:
+                    costmaps, paths, text_tokens = batch
                 
                 # Move data to device
                 costmaps = costmaps.to(self.device, non_blocking=True).float()
                 paths = paths.to(self.device, non_blocking=True).float()
+                if text_tokens is not None:
+                    text_tokens = text_tokens.to(self.device, non_blocking=True).long()
 
                 # Costmaps should be [B, 2, H, W] (2-channel: Slope + Height)
                 # Paths should be [B, Horizon, 2] - 저장 형식: (x, y) ✅
+                # Text tokens should be [B, max_seq_len] (optional)
                 
                 # Extract start and goal positions from paths
                 start_pos = paths[:, 0, :]   # [B, 2] - First waypoint (x, y)
@@ -139,8 +148,8 @@ class Trainer:
                 noisy_paths, noise = self.diffusion_scheduler.forward_process(paths, t)
     
                 # 3. Model prediction: Predict the added noise
-                # 🔥 Now with start/goal conditioning!
-                predicted_noise = self.model(noisy_paths, t, costmaps, start_pos, goal_pos)
+                # 🔥 Now with start/goal + text conditioning!
+                predicted_noise = self.model(noisy_paths, t, costmaps, start_pos, goal_pos, text_tokens)
 
                 # 4. Compute loss: MSE between true noise and predicted noise
                 loss = F.mse_loss(predicted_noise, noise)

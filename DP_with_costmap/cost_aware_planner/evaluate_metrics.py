@@ -11,6 +11,12 @@ from tqdm import tqdm
 # 프로젝트 모듈
 from model import ConditionalPathModel
 from guidance_diffusion import DiffusionScheduler
+"""
+python evaluate_metrics.py --scale 0.5 --save_csv metrics/eval_results.csv
+python evaluate_metrics.py --scale 1.0 --save_csv metrics/eval_results.csv
+python evaluate_metrics.py --scale 2.0 --save_csv metrics/eval_results.csv
+python plot_eval_metrics.py
+"""
 
 def set_seed(seed):
     random.seed(seed)
@@ -21,7 +27,8 @@ def set_seed(seed):
 
 def check_collision_interpolated(costmap, p1, p2, threshold=0.9, step_size=0.5, margin=2):
     """
-    두 점 p1, p2 사이를 촘촘하게(step_size) 검사하여 충돌 여부 확인
+    두 점 p1, p2 사이를 촘촘하게(step_size) 검사하여 충돌 여부 확인.
+    threshold: costmap 값이 이 값보다 크면 충돌(벽)으로 간주. (0~1, 기본 0.9)
     """
     img_size = costmap.shape[0]
     vec = p2 - p1
@@ -62,6 +69,18 @@ def calculate_path_length(path):
     diffs = path[1:] - path[:-1]
     distances = np.linalg.norm(diffs, axis=1)
     return np.sum(distances)
+
+
+def path_mean_cost(costmap, path_pixel, img_size):
+    """Mean cost along path (costmap sampled at path points). GT path uses same metric → 100%."""
+    if len(path_pixel) == 0:
+        return 0.0
+    costs = []
+    for p in path_pixel:
+        r = int(np.clip(p[0], 0, img_size - 1))
+        c = int(np.clip(p[1], 0, img_size - 1))
+        costs.append(costmap[r, c])
+    return np.mean(costs)
 
 def debug_visualize(costmap, gen_pixel, true_pixel, collision_points, idx, scale, is_success):
     plt.figure(figsize=(8, 8))
@@ -147,17 +166,22 @@ def main(args):
     costmaps_all = raw_data["costmaps"] # [N, H, W]
     paths_all = raw_data["paths"]       # [N, Len, 2], Normalized [-1, 1]
     
-    num_samples = len(costmaps_all)
+    total_available = len(costmaps_all)
+    num_samples = min(total_available, args.max_samples)
     img_size = config['data']['img_size']
     
+    if num_samples < total_available:
+        print(f"Using first {num_samples} of {total_available} validation samples.")
+    collision_threshold = args.collision_threshold
     print(f"\n--- Validation Start ({num_samples} samples) ---")
-    print(f"Scale (Guidance): {args.scale}, Collision Threshold: 0.9")
+    print(f"Scale (Guidance): {args.scale}, Collision Threshold: {collision_threshold} (cost > this = wall)")
     
     results = {
         "success_count": 0,
         "success_avg_costs": [],
         "success_max_costs": [],
-        "success_length_ratios": []
+        "success_length_ratios": [],
+        "cost_ratios_pct": [],   # Diffusion cost / A* cost * 100 (GT = 100%)
     }
     
     set_seed(42) # 재현성을 위한 시드 고정
@@ -214,7 +238,9 @@ def main(args):
             p2 = gen_pixel[k+1]
             
             # 충돌 체크
-            hits, max_val = check_collision_interpolated(costmap_clean, p1, p2, threshold=0.9, step_size=0.5)
+            hits, max_val = check_collision_interpolated(
+                costmap_clean, p1, p2, threshold=collision_threshold, step_size=0.5
+            )
             all_collisions.extend(hits)
             
             if max_val > max_path_cost:
@@ -225,13 +251,21 @@ def main(args):
             path_costs.append(costmap_clean[r, c])
 
         is_success = (len(all_collisions) == 0)
-        avg_path_cost = np.mean(path_costs) if len(path_costs) > 0 else 0.0
-        
+        avg_path_cost = np.mean(path_costs) if len(path_costs) > 0 else 0.0  # Diffusion mean cost
+
+        # A* (GT) mean cost along path → 100% baseline
+        astar_mean_cost = path_mean_cost(costmap_clean, true_pixel, img_size)
+        if astar_mean_cost > 1e-9:
+            cost_ratio_pct = (avg_path_cost / astar_mean_cost) * 100.0  # 100% = same as GT
+        else:
+            cost_ratio_pct = 100.0
+        results["cost_ratios_pct"].append(cost_ratio_pct)
+
         # 경로 길이 비율 (Efficiency)
         len_gen = calculate_path_length(gen_pixel)
         len_gt = calculate_path_length(true_pixel)
         length_ratio = len_gen / len_gt if len_gt > 0 else 1.0
-        
+
         # 결과 저장
         if is_success:
             results["success_count"] += 1
@@ -249,7 +283,8 @@ def main(args):
         return
 
     success_rate = (results["success_count"] / num_samples) * 100
-    
+    mean_cost_ratio_pct = np.mean(results["cost_ratios_pct"])  # Diffusion vs A* (GT=100%)
+
     if results["success_count"] > 0:
         final_avg_cost = np.mean(results["success_avg_costs"])
         final_max_cost = np.mean(results["success_max_costs"])
@@ -260,22 +295,40 @@ def main(args):
         final_efficiency = 0.0
 
     print("\n" + "="*60)
-    print(f"  Validation Result")
+    print(f"  Validation Result (A* = GT = 100%)")
     print(f"  Input: {args.val_path} | Scale: {args.scale}")
     print("="*60)
-    print(f"1. Success Rate (SR)      : {success_rate:.2f}% ({results['success_count']}/{num_samples})")
+    print(f"1. Success Rate (SR)           : {success_rate:.2f}% ({results['success_count']}/{num_samples})")
+    print(f"2. Mean Cost (Diffusion/A*)    : {mean_cost_ratio_pct:.2f}% (GT=100%, lower is better)")
     print("-" * 60)
-    print(f"2. Mean Path Cost (Succ)  : {final_avg_cost:.4f}")
-    print(f"3. Avg Max Cost (Succ)    : {final_max_cost:.4f}")
-    print(f"4. Path Efficiency (Succ) : {final_efficiency:.2f}x (Lower is better)")
+    print(f"3. Mean Path Cost (Succ only)  : {final_avg_cost:.4f}")
+    print(f"4. Avg Max Cost (Succ only)    : {final_max_cost:.4f}")
+    print(f"5. Path Efficiency (Succ only) : {final_efficiency:.2f}x (Lower is better)")
     print("="*60 + "\n")
     print(f"Debug images saved in 'debug_val/' directory.")
+
+    # Optional: save one row to CSV for table/graph (run with different --scale then plot_eval_metrics.py)
+    if getattr(args, "save_csv", None):
+        csv_path = args.save_csv
+        os.makedirs(os.path.dirname(csv_path) or ".", exist_ok=True)
+        write_header = not os.path.isfile(csv_path)
+        with open(csv_path, "a") as f:
+            if write_header:
+                f.write("scale,success_rate_pct,mean_cost_pct\n")
+            f.write(f"{args.scale},{success_rate:.4f},{mean_cost_ratio_pct:.4f}\n")
+        print(f"Appended result to {csv_path}")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=str, default='configs/default_config.yaml')
     parser.add_argument('--model_name', type=str, default='epoch_2000_model.pt')
     parser.add_argument('--val_path', type=str, default='data/dataset_validation.pt')
-    parser.add_argument('--scale', type=float, default=2.0) 
+    parser.add_argument('--scale', type=float, default=2.0,
+                        help='Cost guidance scale (cost_guidance_scale): 벽 회피 가이던스 세기. 0=vanilla, 클수록 회피 강함')
+    parser.add_argument('--max_samples', type=int, default=100,
+                        help='Max number of validation samples to evaluate (default: 100)')
+    parser.add_argument('--collision_threshold', type=float, default=0.9,
+                        help='Costmap value above this = collision/wall (0~1, default: 0.9). Path is success only if no cell > threshold.')
+    parser.add_argument('--save_csv', type=str, default=None, help='Append one row to CSV (scale, success_rate, mean_cost_pct)')
     args = parser.parse_args()
     main(args)

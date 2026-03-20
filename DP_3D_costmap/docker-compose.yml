@@ -18,6 +18,8 @@ services:
       - ./3D_costmap:/workspace
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
 
+    shm_size: '2gb'   # DataLoader multiprocessing (num_workers > 0) needs enough /dev/shm
+
     deploy:
       resources:
         reservations:

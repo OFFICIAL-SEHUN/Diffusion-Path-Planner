@@ -6,6 +6,8 @@ import argparse
 from tqdm import tqdm
 from scipy.ndimage import gaussian_filter
 import heapq
+from path_utils import check_path_linearity
+import matplotlib.pyplot as plt
 
 
 def calculate_paper_cot(slope_deg):
@@ -58,8 +60,8 @@ def calculate_directional_cot(height_curr, height_next, distance, limit_angle_de
     slope_rad = np.arctan2(height_diff, distance)
     slope_deg = np.degrees(slope_rad)
     
-    # 등반 불가능 체크 (절대값)
-    if abs(slope_deg) > limit_angle_deg:
+    # 등반 불가능 체크 (절대값) - limit_angle_deg 이상이면 등반 불가능 (회피)
+    if abs(slope_deg) >= limit_angle_deg:
         return np.inf
     
     # 논문 수식으로 CoT 계산 (방향성 포함)
@@ -108,7 +110,7 @@ SAVE_NAME = "test_dataset.pt"
 class SlopeCotGenerator:
     """Slope + CoT 기반 지형 생성 및 경로 계획"""
     
-    def __init__(self, img_size, height_range, mass, gravity, limit_angle_deg, pixel_resolution=0.5):
+    def __init__(self, img_size, height_range, mass, gravity, limit_angle_deg, max_iterations, pixel_resolution=0.5):
         """
         Args:
             img_size (int): 맵 크기 (img_size x img_size)
@@ -116,6 +118,7 @@ class SlopeCotGenerator:
             mass (float): 로봇 질량 (kg)
             gravity (float): 중력 가속도 (m/s^2)
             limit_angle_deg (float): 최대 등반 가능 각도 (도)
+            max_iterations (int): 최대 반복 횟수 (타임아웃 방지)
             pixel_resolution (float): 픽셀당 실제 거리 (m/pixel)
                                       예: 0.5 → 100x100 픽셀 = 50m x 50m
         """
@@ -125,6 +128,7 @@ class SlopeCotGenerator:
         self.gravity = gravity
         self.limit_angle = np.radians(limit_angle_deg)
         self.pixel_resolution = pixel_resolution
+        self.max_iterations = max_iterations
         
         # 생성된 데이터 저장
         self.height_map = None
@@ -163,23 +167,8 @@ class SlopeCotGenerator:
         
         # Data Augmentation: terrain_scales가 None이면 랜덤 생성
         if terrain_scales is None:
-            terrain_scales = []
-            
-            # 1. Large scale (부드러운 베이스) - 항상 포함
-            large_scale = np.random.uniform(15, 25)   # 큰 언덕
-            large_weight = np.random.uniform(15, 30)  # 중간 높이
-            terrain_scales.append((large_scale, large_weight))
-            
-            # 2. Medium scale (중간 언덕) - 항상 포함
-            medium_scale = np.random.uniform(8, 15)   # 중간 언덕
-            medium_weight = np.random.uniform(10, 20) # 중간 높이
-            terrain_scales.append((medium_scale, medium_weight))
-            
-            # 3. Small scale (디테일) - 확률적으로 포함
-            if np.random.rand() > 0.3:  # 70% 확률
-                small_scale = np.random.uniform(3, 8)    # 작은 디테일
-                small_weight = np.random.uniform(5, 15)  # 작은 높이
-                terrain_scales.append((small_scale, small_weight))
+            print("No terrain scales provided")
+            raise ValueError("No terrain scales provided")
         
         # 다중 스케일 노이즈 합성
         for scale, weight in terrain_scales:
@@ -213,13 +202,14 @@ class SlopeCotGenerator:
         return slope_map.astype(np.float32)
     
     
-    def find_path(self, start, goal):
+    def find_path(self, start, goal, weight=0.5):
         """
         A* 알고리즘으로 CoT 효율적 경로 탐색
         
         Args:
             start (tuple): 시작 위치 (row, col)
             goal (tuple): 목표 위치 (row, col)
+            weight (float): 거리 vs CoT 균형 가중치 [0, 1]
             
         Returns:
             list: 경로 [(row, col), ...] 또는 None
@@ -232,13 +222,16 @@ class SlopeCotGenerator:
             self.height_map,  # 방향성 CoT 계산을 위한 height_map
             start, 
             goal,
-            self.limit_angle
+            self.limit_angle,
+            self.pixel_resolution,  # 실제 거리 계산을 위한 pixel_resolution 추가
+            self.max_iterations, # 최대 반복 횟수
+            weight=weight  # Weight parameter 추가
         )
 
 
-def a_star_cot_search(slope_map, height_map, start, goal, limit_angle_rad, max_iterations=5000):
+def a_star_cot_search(slope_map, height_map, start, goal, limit_angle_rad, max_iterations, pixel_resolution=0.5,  weight=0.5):
     """
-    CoT 효율 기반 A* 경로 탐색 (방향성 CoT 적용)
+    CoT 효율 기반 A* 경로 탐색 (방향성 CoT 적용) + Weight balancing
     
     Args:
         slope_map (ndarray): 경사각 맵 (라디안, 등반 불가 체크용)
@@ -247,6 +240,11 @@ def a_star_cot_search(slope_map, height_map, start, goal, limit_angle_rad, max_i
         goal (tuple): 목표 위치 (row, col)
         limit_angle_rad (float): 등반 불가능한 최대 경사각 (라디안)
         max_iterations (int): 최대 반복 횟수 (타임아웃 방지)
+        pixel_resolution (float): 픽셀당 실제 거리 (m/pixel) - CoT 계산에 필수!
+        weight (float): 거리 vs CoT 균형 가중치 [0, 1]
+                       - w=0.1: 거리 우선 (빠른 경로, "Quickly", "Shortest path")
+                       - w=0.9: CoT 우선 (안전한 경로, "Safe route", "Energy efficient")
+                       - w=0.5: 균형 (기본값)
         
     Returns:
         list: 경로 또는 None
@@ -259,13 +257,25 @@ def a_star_cot_search(slope_map, height_map, start, goal, limit_angle_rad, max_i
     # limit_angle을 도(degree)로 변환 (calculate_directional_cot에서 사용)
     limit_angle_deg = np.degrees(limit_angle_rad)
     
-    # 시작/끝 지점이 등반 불가능하면 실패
-    if slope_map[start] > limit_angle_rad or slope_map[goal] > limit_angle_rad:
+    # 시작/끝 지점이 등반 불가능하면 실패 (limit_angle_rad 이상이면 등반 불가능 - 회피)
+    if slope_map[start] >= limit_angle_rad or slope_map[goal] >= limit_angle_rad:
         return None
     
+    # 맵 크기에 비례하여 max_iterations 조정 (너무 큰 값 방지)
+    map_size = rows * cols
+
+    if max_iterations < map_size * 10:
+        max_iterations = map_size * 10
+    
     def heuristic(a, b):
-        """유클리드 거리 휴리스틱"""
-        return np.hypot(a[0] - b[0], a[1] - b[1])
+        """
+        유클리드 거리 휴리스틱 (실제 거리 * 최소 CoT)
+        CoT는 항상 0.1 이상이므로, 실제 거리 * 0.1을 최소 비용으로 사용
+        """
+        pixel_distance = np.hypot(a[0] - b[0], a[1] - b[1])
+        real_distance = pixel_distance * pixel_resolution
+        min_cot = 0.1  # calculate_directional_cot의 최소값
+        return real_distance * min_cot
     
     # 우선순위 큐
     counter = 0
@@ -284,7 +294,6 @@ def a_star_cot_search(slope_map, height_map, start, goal, limit_angle_rad, max_i
     
     while open_heap and iterations < max_iterations:
         iterations += 1
-        
         _, _, current = heapq.heappop(open_heap)
         
         # 이미 방문한 노드는 스킵
@@ -314,31 +323,43 @@ def a_star_cot_search(slope_map, height_map, start, goal, limit_angle_rad, max_i
             if (nr, nc) in closed_set:
                 continue
             
-            # 등반 불가능 지역 체크 (slope_map 사용)
-            if slope_map[nr, nc] > limit_angle_rad:
+            # 이동 거리 (픽셀 단위)
+            pixel_distance = np.sqrt(2.0) if (dr != 0 and dc != 0) else 1.0
+            # 실제 거리 (미터 단위) - CoT 계산에 필수!
+            real_distance = pixel_distance * pixel_resolution
+            
+            # 방향성 CoT 비용 계산 (논문 수식 기반) - 먼저 체크!
+            # calculate_directional_cot는 실제 이동 방향의 경사각을 정확히 계산
+            height_curr = height_map[cr, cc]
+            height_next = height_map[nr, nc]
+            directional_cot = calculate_directional_cot(
+                height_curr, height_next, real_distance, limit_angle_deg
+            )
+            
+            # 등반 불가능한 경로는 스킵 (20도 이상이면 회피)
+            if np.isinf(directional_cot):
+                continue
+            
+            # 등반 불가능 지역 체크 (slope_map 사용) - 추가 안전장치
+            # limit_angle_rad 이상이면 등반 불가능 (회피)
+            if slope_map[nr, nc] >= limit_angle_rad:
                 continue
             
             # 대각선 이동 시 코너컷 방지
             if abs(dr) + abs(dc) == 2:
-                if (slope_map[cr + dr, cc] > limit_angle_rad or 
-                    slope_map[cr, cc + dc] > limit_angle_rad):
+                if (slope_map[cr + dr, cc] >= limit_angle_rad or 
+                    slope_map[cr, cc + dc] >= limit_angle_rad):
                     continue
             
-            # 이동 거리
-            step_distance = np.sqrt(2.0) if (dr != 0 and dc != 0) else 1.0
+            # 총 비용 = (1-w) * 거리 + w * CoT * 실제 거리
+            # w=0.1: 거리 우선 → 빠른 경로
+            # w=0.9: CoT 우선 → 에너지 효율적 경로
+            distance_cost = real_distance
+            cot_cost = directional_cot * real_distance
             
-            # ✅ 방향성 CoT 비용 계산 (논문 수식 기반)
-            height_curr = height_map[cr, cc]
-            height_next = height_map[nr, nc]
-            directional_cot = calculate_directional_cot(
-                height_curr, height_next, step_distance, limit_angle_deg
-            )
-            
-            # 등반 불가능한 경로는 스킵
-            if np.isinf(directional_cot):
-                continue
-            
-            tentative_g = g_score[cr, cc] + step_distance * directional_cot
+            # Weighted combination
+            step_cost = (1 - weight) * distance_cost + weight * cot_cost
+            tentative_g = g_score[cr, cc] + step_cost
              
             # 더 나은 경로 발견
             if tentative_g < g_score[nr, nc]:
@@ -353,33 +374,6 @@ def a_star_cot_search(slope_map, height_map, start, goal, limit_angle_rad, max_i
                 heapq.heappush(open_heap, (f, counter, (nr, nc)))
     
     return None
-
-
-def normalize_costmap(costmap):
-    """
-    Costmap 정규화 (Inf 처리 및 [0, 1] 범위로)
-    
-    Inf 처리 전략:
-    - Inf를 max_val보다 충분히 큰 값으로 설정 (max_val * 2)
-    - 정규화 후 Inf 영역이 명확히 높은 값(~1.0)을 가지도록 함
-    - 모델이 "등반 불가능" vs "매우 어려움"을 구분 가능
-    """
-    costmap_float = costmap.astype(np.float32)
-    inf_mask = np.isinf(costmap_float)
-    
-    if (~inf_mask).any():
-        max_val = np.max(costmap_float[~inf_mask])
-    else:
-        max_val = 1.0
-    
-    # Inf를 max_val의 2배로 설정 (명확한 구분)
-    # 정규화 후: 일반 영역 [0, ~0.5], Inf 영역 [~1.0]
-    costmap_float[inf_mask] = max_val * 2.0
-    
-    # 안전한 나눗셈
-    costmap_norm = costmap_float / (np.max(costmap_float) + 1e-8)
-    
-    return costmap_norm
 
 def resample_path(path, horizon):
     """Path 리샘플링 (Variable length -> Fixed horizon)"""
@@ -412,9 +406,39 @@ def path_pixels_to_normalized(path_pixels, img_size):
     
     return path_normalized
 
+
+# Text label mapping: weight -> text labels
+TEXT_LABELS = {
+    0.1: ["Quickly", "Shortest path", "Ignore the hills"],
+    0.3: ["Fast route", "Minimize distance", "Take direct path"],
+    0.5: ["Balanced path", "Moderate route", "Consider terrain"],
+    0.7: ["Safe route", "Avoid steep slopes", "Prefer flat terrain"],
+    0.9: ["Energy efficient", "Safe route", "Avoid steep slope", "Minimize elevation gain"]
+}
+
+
+def weight_to_text_label(weight):
+    """
+    Weight 값을 텍스트 라벨로 변환
+    
+    
+    
+    Args:
+        weight (float): Weight 값 [0, 1]
+        
+    Returns:
+        str: 텍스트 라벨
+    """
+    # 가장 가까운 weight 값 찾기
+    closest_weight = min(TEXT_LABELS.keys(), key=lambda x: abs(x - weight))
+    labels = TEXT_LABELS[closest_weight]
+    # 랜덤으로 하나 선택
+    return np.random.choice(labels)
+
 def generate_slope_cot_data(num_samples=5000, paths_per_terrain=5, img_size=100, horizon=120,
                             height_range=(0, 10), mass=10.0, gravity=9.8, 
-                            limit_angle_deg=30, pixel_resolution=0.5, terrain_scales=None):
+                            limit_angle_deg=30, pixel_resolution=0.5, terrain_scales=None,
+                            min_distance_factor=1.0, pca_linearity_threshold=0.95, max_iterations=10000):
     """
     Slope + Height 기반 데이터 생성 (Multi-path augmentation)
     
@@ -432,6 +456,13 @@ def generate_slope_cot_data(num_samples=5000, paths_per_terrain=5, img_size=100,
         limit_angle_deg (float): 최대 등반 각도
         pixel_resolution (float): 픽셀당 실제 거리 (m/pixel)
                                   예: 0.5 → 100x100픽셀 = 50m x 50m
+        terrain_scales (list): 지형 스케일 파라미터 (None이면 랜덤 생성)
+        min_distance_factor (float): 최소 거리 팩터 (min_distance = img_size / factor)
+                                     예: 1.0 → min_distance = img_size
+                                         0.7 → min_distance = img_size / 0.7
+        pca_linearity_threshold (float): PCA 선형성 검사 임계값 (0.98 = 98%)
+                                         첫 번째 주성분 분산 비율이 이 값 이상이면 경로 거부
+                                         높을수록 더 엄격 (직선 경로만 거부), 낮을수록 더 느슨
     
     Returns:
         - Costmaps: [Slope map, Height map] 2채널
@@ -449,25 +480,35 @@ def generate_slope_cot_data(num_samples=5000, paths_per_terrain=5, img_size=100,
     print(f"      • Slope: Physical terrain steepness")
     print(f"      • Height: Elevation info (AI infers uphill/downhill direction)")
     print(f"  → GT Generation: CoT-based A* search (directional CoT)")
+    print(f"  → PCA Linearity Check: Threshold = {pca_linearity_threshold} (exclude too linear paths)")
     print(f"  → Data Augmentation: Same terrain, different start/goal positions\n")
     
     costmaps_list = []
     paths_list = []
     height_maps_list = []
     slope_maps_list = []
+    text_labels_list = []  # 텍스트 라벨 저장
     
     # 통계 수집
     slope_stats = {'mean': [], 'max': [], 'std': []}
     terrain_path_counts = []  # 각 terrain에서 생성된 path 개수
     
-    # 랜덤 시작/끝 지점 범위 (너무 가장자리는 피함)
+    # PCA 검사 통계
+    total_pca_rejections = 0
+    
     margin = img_size // 10
+    min_distance = int(img_size // min_distance_factor)
     
     pbar = tqdm(total=total_paths, desc="Generating paths")
     samples_generated = 0  # 총 path 개수
     terrains_generated = 0  # terrain 개수
     
-    while terrains_generated < num_terrains:
+    # 무한 루프 방지: 최대 terrain 시도 횟수
+    max_terrain_attempts = num_terrains * 10  # 각 terrain당 최대 10번 시도
+    terrain_attempts = 0
+    
+    while terrains_generated < num_terrains and terrain_attempts < max_terrain_attempts:
+        terrain_attempts += 1
         # 1. 지형 생성 (Slope + Height)
         generator = SlopeCotGenerator(
             img_size=img_size,
@@ -475,6 +516,7 @@ def generate_slope_cot_data(num_samples=5000, paths_per_terrain=5, img_size=100,
             mass=mass,
             gravity=gravity,
             limit_angle_deg=limit_angle_deg,
+            max_iterations=max_iterations, 
             pixel_resolution=pixel_resolution
         )
         
@@ -512,19 +554,26 @@ def generate_slope_cot_data(num_samples=5000, paths_per_terrain=5, img_size=100,
         
         # 2. 🔥 같은 terrain에서 여러 개의 path 생성
         paths_found = 0
-        max_total_attempts = paths_per_terrain * 10  # ✅ 30 → 10으로 감소 (빠른 실패)
+        max_total_attempts = paths_per_terrain * 100
         total_attempts = 0
+        pca_rejections = 0  # PCA로 거부된 경로 수 추적
         
         while paths_found < paths_per_terrain and total_attempts < max_total_attempts:
-            # 랜덤 시작/끝 지점 선택
-            start = (np.random.randint(margin, img_size - margin),
-                    np.random.randint(margin, img_size - margin))
-            goal = (np.random.randint(margin, img_size - margin),
-                   np.random.randint(margin, img_size - margin))
-            
-            # 시작과 끝이 너무 가까우면 다시 선택
-            dist = np.hypot(goal[0] - start[0], goal[1] - start[1])
-            if dist < img_size * 0.5:
+            # 랜덤 시작/끝 지점 선택 
+            for position_attempt in range(100):
+                start = (np.random.randint(margin, img_size - margin),
+                        np.random.randint(margin, img_size - margin))
+                goal = (np.random.randint(margin, img_size - margin),
+                       np.random.randint(margin, img_size - margin))
+                
+                # Calculate Euclidean distance
+                distance = np.sqrt((goal[0] - start[0])**2 + 
+                                 (goal[1] - start[1])**2)
+                
+                if distance >= min_distance:
+                    break
+            else:
+                # No valid position found in 100 attempts, continue to next path attempt
                 total_attempts += 1
                 continue
             
@@ -532,19 +581,47 @@ def generate_slope_cot_data(num_samples=5000, paths_per_terrain=5, img_size=100,
             # Terrain 필터링이 엄격하므로 높이 차이 제한 불필요
             # (30도 초과 구간이 5% 미만이므로 대부분의 경로가 통과 가능)
             
-            # 경로 탐색
-            path_pixels = generator.find_path(start, goal)
+            # 🔥 Weight 선택: 다양한 전략을 학습하기 위해 랜덤 선택
+            # w=0.1: 빠른 경로, w=0.9: 안전한 경로
+            weight = np.random.choice([0.1, 0.3, 0.5, 0.7, 0.9], p=[0.2, 0.2, 0.2, 0.2, 0.2])
+        
+            
+            # 경로 탐색 (weight 적용)
+            path_pixels = generator.find_path(start, goal, weight=weight)
+            
+            if path_pixels is None or len(path_pixels) == 0:
+                # A* 경로 탐색 실패
+                total_attempts += 1
+                continue
             
             if path_pixels is not None and len(path_pixels) > 0:
+                # 경로 길이 체크
+                if len(path_pixels) <= 10:
+                    total_attempts += 1
+                    continue
+                
+                # PCA 선형성 검사 (너무 직선적인 경로 제외)
+                if len(path_pixels) >= 3:  # 최소 3개 점 필요
+                    explained_var, is_linear = check_path_linearity(path_pixels, pca_linearity_threshold)
+                    if is_linear:
+                        # 너무 직선적인 경로는 스킵
+                        pca_rejections += 1
+                        total_attempts += 1
+                        continue
+                
                 # Path 변환 및 리샘플링
                 path_normalized = path_pixels_to_normalized(path_pixels, img_size)
                 path_fixed = resample_path(path_normalized, horizon)
+                
+                # 텍스트 라벨 생성 (weight -> text)
+                text_label = weight_to_text_label(weight)
                 
                 # 데이터 저장 (같은 costmap을 재사용!)
                 costmaps_list.append(costmap_2ch.copy())  # 같은 terrain
                 paths_list.append(path_fixed)             # 다른 path
                 height_maps_list.append(h_map)
                 slope_maps_list.append(slope_degrees)
+                text_labels_list.append(text_label)       # 텍스트 라벨
                 
                 paths_found += 1
                 samples_generated += 1
@@ -553,14 +630,27 @@ def generate_slope_cot_data(num_samples=5000, paths_per_terrain=5, img_size=100,
             total_attempts += 1
         
         # 이 terrain에서 최소 1개 이상의 path를 찾았으면 terrain 카운트 증가
+        total_pca_rejections += pca_rejections
         if paths_found > 0:
             terrain_path_counts.append(paths_found)
             terrains_generated += 1
+            if pca_rejections > 0:
+                pbar.write(f"  → Terrain {terrains_generated}: {pca_rejections} paths rejected by PCA")
+        else:
+            # 경로를 찾지 못한 경우 (PCA가 너무 엄격할 수 있음)
+            if pca_rejections > max_total_attempts * 0.5:  # 50% 이상이 PCA로 거부됨
+                pbar.write(f"  ⚠️  Terrain skipped: {pca_rejections}/{total_attempts} paths rejected by PCA (threshold may be too strict)")
         
         # 혹시 paths_per_terrain개를 못 찾았으면 경고 (조용히 넘어감)
         # 일부 terrain은 어려울 수 있음
     
     pbar.close()
+    
+    # 무한 루프 방지: 최대 시도 횟수 도달 시 경고
+    if terrain_attempts >= max_terrain_attempts and terrains_generated < num_terrains:
+        print(f"\n⚠️  Warning: Reached max terrain attempts ({max_terrain_attempts})")
+        print(f"   Generated {terrains_generated}/{num_terrains} terrains")
+        print(f"   PCA threshold ({pca_linearity_threshold}) may be too strict, or terrain generation is too difficult")
     
     # 통계 출력
     print(f"\n{'='*60}")
@@ -577,9 +667,16 @@ def generate_slope_cot_data(num_samples=5000, paths_per_terrain=5, img_size=100,
     print(f"Max Slope:   {np.mean(slope_stats['max']):.2f}° ± {np.std(slope_stats['max']):.2f}°")
     print(f"             Range: [{np.min(slope_stats['max']):.2f}°, {np.max(slope_stats['max']):.2f}°]")
     print(f"Slope Std:   {np.mean(slope_stats['std']):.2f}° ± {np.std(slope_stats['std']):.2f}°")
+    print(f"\nPCA Statistics:")
+    print(f"Total PCA Rejections: {total_pca_rejections} paths")
+    if total_pca_rejections > 0:
+        rejection_rate = total_pca_rejections / (samples_generated + total_pca_rejections) * 100 if (samples_generated + total_pca_rejections) > 0 else 0
+        print(f"Rejection Rate: {rejection_rate:.1f}%")
+        if rejection_rate > 50:
+            print(f"⚠️  High rejection rate! Consider lowering pca_linearity_threshold (current: {pca_linearity_threshold})")
     print(f"{'='*60}\n")
     
-    return (costmaps_list, paths_list, height_maps_list, slope_maps_list)
+    return (costmaps_list, paths_list, height_maps_list, slope_maps_list, text_labels_list)
 
 def generate_and_save(config=None, config_path=None):
     """
@@ -611,6 +708,8 @@ def generate_and_save(config=None, config_path=None):
     limit_angle_deg = config['gradient']['limit_angle_deg']
     pixel_resolution = config['gradient'].get('pixel_resolution', 0.5)  # Default: 0.5 m/pixel
     terrain_scales = config['gradient'].get('terrain_scales', None)  # None = random generation
+    min_distance_factor = config['data'].get('min_distance_factor', 1.0)  # Default: 1.0 (main.py와 동일)
+    pca_linearity_threshold = config['gradient'].get('pca_linearity_threshold', 0.98)  # Default: 0.98
     
     if not os.path.exists(SAVE_DIR):
         os.makedirs(SAVE_DIR)
@@ -627,6 +726,8 @@ def generate_and_save(config=None, config_path=None):
     print(f"Total Paths: {num_samples * paths_per_terrain}")
     print(f"Height Range: {height_range[0]}m ~ {height_range[1]}m")
     print(f"Max Climb Angle: {limit_angle_deg}°")
+    print(f"PCA Linearity Threshold: {pca_linearity_threshold} (exclude too linear paths)")
+    print(f"Min Distance Factor: {min_distance_factor} (min_distance = img_size/{min_distance_factor} = {int(img_size // min_distance_factor)} pixels)")
     print(f"Input Channels: [Slope map, Height map]")
     print(f"Cost Model: CoT (Cost of Transport) - Directional (A* only)")
     print("="*60)
@@ -634,7 +735,7 @@ def generate_and_save(config=None, config_path=None):
     
     # 데이터 생성 (config 파라미터 사용)
     (costmaps_list, paths_list, height_maps_list,
-     slope_maps_list) = generate_slope_cot_data(
+     slope_maps_list, text_labels_list) = generate_slope_cot_data(
         num_samples=num_samples,
         paths_per_terrain=paths_per_terrain,
         img_size=img_size,
@@ -644,7 +745,9 @@ def generate_and_save(config=None, config_path=None):
         gravity=gravity,
         limit_angle_deg=limit_angle_deg,
         pixel_resolution=pixel_resolution,
-        terrain_scales=terrain_scales
+        terrain_scales=terrain_scales,
+        min_distance_factor=min_distance_factor,
+        pca_linearity_threshold=pca_linearity_threshold
     )
     
     # 텐서로 변환
@@ -653,6 +756,40 @@ def generate_and_save(config=None, config_path=None):
     height_maps_tensor = torch.from_numpy(np.array(height_maps_list)).float()
     slope_maps_tensor = torch.from_numpy(np.array(slope_maps_list)).float()
     
+    # 🔥 텍스트 라벨 → 토큰 변환
+    # 모든 고유한 단어를 수집하여 vocabulary 생성
+    all_words = set() 
+    for label in text_labels_list:
+        words = label.lower().split()
+        all_words.update(words)
+    
+    unique_words = sorted(list(all_words))
+    vocab_size = len(unique_words) + 2  # +2 for <PAD> and <UNK>
+    
+    # Vocabulary 생성: word -> token_id
+    vocab = {word: idx + 2 for idx, word in enumerate(unique_words)}
+    vocab['<PAD>'] = 0
+    vocab['<UNK>'] = 1
+    vocab_reverse = {v: k for k, v in vocab.items()}
+    
+    # 텍스트 라벨을 토큰 인덱스로 변환
+    def text_to_tokens(text_label, max_seq_len=32):
+        """텍스트 라벨을 토큰 시퀀스로 변환"""
+        words = text_label.lower().split()
+        tokens = [vocab.get(word, vocab['<UNK>']) for word in words]
+        
+        # Padding or truncation
+        if len(tokens) > max_seq_len:
+            tokens = tokens[:max_seq_len]
+        else:
+            tokens = tokens + [vocab['<PAD>']] * (max_seq_len - len(tokens))
+        
+        return tokens
+    
+    # 모든 텍스트 라벨을 토큰으로 변환
+    text_tokens_list = [text_to_tokens(label) for label in text_labels_list]
+    text_tokens_tensor = torch.tensor(text_tokens_list, dtype=torch.long)  # [N, max_seq_len]
+    
     # 저장
     save_path = os.path.join(SAVE_DIR, SAVE_NAME)
     torch.save({
@@ -660,7 +797,11 @@ def generate_and_save(config=None, config_path=None):
         "paths": paths_tensor,                # CoT 기반 최적 경로 [N, HORIZON, 2]
         "height_maps": height_maps_tensor,    # 높이 맵 [N, H, W]
         "slope_maps": slope_maps_tensor,      # 경사각 맵 (도) [N, H, W]
-        "type": "slope_height_2channel"       # 2채널 입력
+        "text_labels": text_labels_list,      # 원본 텍스트 라벨 리스트
+        "text_tokens": text_tokens_tensor,    # 텍스트 토큰 [N, max_seq_len]
+        "vocab": vocab,                       # Vocabulary 딕셔너리
+        "vocab_size": vocab_size,             # Vocabulary 크기
+        "type": "slope_height_2channel_text"  # 텍스트 조건 포함
     }, save_path)
     
     # 결과 출력
@@ -671,12 +812,17 @@ def generate_and_save(config=None, config_path=None):
     print(f"  - Channel 0: Slope map (terrain steepness)")
     print(f"  - Channel 1: Height map (elevation for gradient inference)")
     print(f"Paths shape:         {paths_tensor.shape}     (CoT-based A* - GT)")
+    print(f"Text tokens shape:   {text_tokens_tensor.shape}  (Text command tokens)")
+    print(f"Vocabulary size:     {vocab_size}")
+    print(f"Unique words:        {len(unique_words)}")
+    print(f"Sample vocab:        {list(vocab.keys())[:10]}...")
     print(f"Height maps shape:   {height_maps_tensor.shape}")
     print(f"Slope maps shape:    {slope_maps_tensor.shape}")
     print(f"\n💡 Approach:")
-    print(f"  - Input: [Slope, Height] - AI infers uphill/downhill from height gradient")
-    print(f"  - GT: A* with directional CoT (calculate_directional_cot)")
-    print(f"  - Learning: Model learns energy-efficient paths by inferring CoT from terrain")
+    print(f"  - Input: [Slope, Height] + Text command - Language-conditioned navigation")
+    print(f"  - GT: A* with weighted CoT (weight=0.1: quickly, weight=0.9: safe route)")
+    print(f"  - Text Labels: Weight-based commands (e.g., 'Quickly', 'Safe route', 'Energy efficient')")
+    print(f"  - Learning: Model learns to generate paths based on terrain + text command")
     
     file_size_mb = os.path.getsize(save_path) / 1024 / 1024
     print(f"\nFile size: {file_size_mb:.2f} MB")

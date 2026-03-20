@@ -32,8 +32,7 @@ def main(args):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
 
-    # --- Initialize Components ---
-    dataset = FixedDataset(config)
+    # --- Initialize Components (dataset only for train) ---
     model = ConditionalPathModel(config=config)
     diffusion_scheduler = DiffusionScheduler(
         timesteps=config['diffusion']['timesteps'],
@@ -43,6 +42,7 @@ def main(args):
     )
 
     if args.mode == 'train':
+        dataset = FixedDataset(config)
         print("--- Starting Training Mode ---")
         trainer = Trainer(
             model=model,
@@ -129,7 +129,20 @@ def main(args):
         end_tensor = torch.from_numpy(norm_end).float().to(device).unsqueeze(0)
         
         # --- Run Sampling (In-painting 적용) ---
+        # Inference는 config의 inference.timesteps 사용 (없으면 학습과 동일 200 step)
+        infer_timesteps = config.get('inference', {}).get('timesteps', config['diffusion']['timesteps'])
+        if infer_timesteps != config['diffusion']['timesteps']:
+            diffusion_scheduler = DiffusionScheduler(
+                timesteps=infer_timesteps,
+                beta_start=config['diffusion']['beta_start'],
+                beta_end=config['diffusion']['beta_end'],
+                device=device
+            )
+            print(f"Using {infer_timesteps} steps for faster inference (train uses {config['diffusion']['timesteps']}).")
         print("Running Diffusion Sampling with In-painting...")
+        if device == "cuda":
+            torch.cuda.synchronize()
+        t_start = time.perf_counter()
         generated_path = diffusion_scheduler.sample(
             model=model,
             condition=costmap_tensor,
@@ -138,6 +151,11 @@ def main(args):
             end_pos=end_tensor
             # cost_guidance_scale=args.scale # on/off
         )
+        if device == "cuda":
+            torch.cuda.synchronize()
+        t_end = time.perf_counter()
+        inference_sec = t_end - t_start
+        print(f"Inference time: {inference_sec:.4f} s ({inference_sec*1000:.2f} ms)")
         
         print("Generated path shape:", generated_path.shape)
         
@@ -201,7 +219,9 @@ def main(args):
         print(f"Start: {start_tensor[0].cpu().numpy()}")
         print(f"End:   {end_tensor[0].cpu().numpy()}")
         print("Running Diffusion Sampling on Training Data...")
-        
+        if device == "cuda":
+            torch.cuda.synchronize()
+        t_start = time.perf_counter()
         generated_path = diffusion_scheduler.sample(
             model=model,
             condition=costmap_tensor,
@@ -209,6 +229,11 @@ def main(args):
             start_pos=start_tensor,
             end_pos=end_tensor
         )
+        if device == "cuda":
+            torch.cuda.synchronize()
+        t_end = time.perf_counter()
+        inference_sec = t_end - t_start
+        print(f"Inference time: {inference_sec:.4f} s ({inference_sec*1000:.2f} ms)")
         
         # 7. 결과 시각화
         # Training Data는 이미 정규화되어 있을 것이므로 그대로 그립니다.

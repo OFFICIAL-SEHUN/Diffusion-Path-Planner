@@ -80,6 +80,7 @@ class DiffusionScheduler:
                shape: Tuple[int, int, int],
                start_pos: Optional[torch.Tensor] = None, 
                end_pos: Optional[torch.Tensor] = None,
+               text_tokens: Optional[torch.Tensor] = None,
                show_progress: bool = True,
                save_intermediates: bool = False,
                intermediate_steps: Optional[list] = None) -> torch.Tensor:
@@ -149,8 +150,8 @@ class DiffusionScheduler:
             # 타임스텝 텐서 생성
             t = torch.full((shape[0],), i, device=self.device, dtype=torch.long)
             
-            # 모델로 노이즈 예측 (start/goal 전달)
-            predicted_noise = model(x, t, condition, start_pos, end_pos)
+            # 모델로 노이즈 예측 (start/goal/text 전달)
+            predicted_noise = model(x, t, condition, start_pos, end_pos, text_tokens)
             
             # Reverse process 공식 적용
             # p(x_{t-1} | x_t) = N(x_{t-1}; μ_θ(x_t, t), Σ_θ(x_t, t))

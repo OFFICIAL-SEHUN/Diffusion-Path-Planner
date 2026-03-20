@@ -173,6 +173,9 @@ def main(args):
     # Case A: Vanilla (No Guidance)
     print("Running Vanilla...")
     set_seed(compare_seed) # 시드 리셋
+    if device == "cuda":
+        torch.cuda.synchronize()
+    t_start_vanilla = time.perf_counter()
     path_vanilla = diffusion_scheduler.sample(
         model=model,
         condition=costmap_tensor,
@@ -181,10 +184,17 @@ def main(args):
         end_pos=end_tensor,
         cost_guidance_scale=0.0
     )
+    if device == "cuda":
+        torch.cuda.synchronize()
+    t_vanilla = time.perf_counter() - t_start_vanilla
+    print(f"  Vanilla inference time: {t_vanilla:.4f} s ({t_vanilla*1000:.2f} ms)")
 
     # Case B: Guided
     print(f"Running Guided (Scale={args.scale})...")
     set_seed(compare_seed) # 시드 리셋
+    if device == "cuda":
+        torch.cuda.synchronize()
+    t_start_guided = time.perf_counter()
     path_guided = diffusion_scheduler.sample(
         model=model,
         condition=costmap_tensor,
@@ -193,6 +203,10 @@ def main(args):
         end_pos=end_tensor,
         cost_guidance_scale=args.scale
     )
+    if device == "cuda":
+        torch.cuda.synchronize()
+    t_guided = time.perf_counter() - t_start_guided
+    print(f"  Guided inference time: {t_guided:.4f} s ({t_guided*1000:.2f} ms)")
 
     # 4. 결과 저장
     plot_comparison(costmap_vis, path_vanilla, path_guided, true_path_vis, config, args.scale)

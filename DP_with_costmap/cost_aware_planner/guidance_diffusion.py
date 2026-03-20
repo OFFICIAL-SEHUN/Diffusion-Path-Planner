@@ -24,7 +24,7 @@ class DiffusionScheduler:
         return xt, noise
 
     # [수정 1] @torch.no_grad() 제거 (Gradient 계산 필요)
-    def sample(self, model, condition, shape, start_pos=None, end_pos=None, cost_guidance_scale=20.0):
+    def sample(self, model, condition, shape, start_pos=None, end_pos=None, cost_guidance_scale=0.0):
         """
         Args:
             cost_guidance_scale (float): 벽을 피하려는 힘의 세기. (보통 10.0 ~ 100.0 사이 권장)

@@ -40,4 +40,5 @@ training:
 
 # --- Inference ---
 inference:
-  # No specific params needed other than the trained model path
+  # Fewer steps = faster inference, slight quality tradeoff. Set to 200 for same as training.
+  timesteps: 200

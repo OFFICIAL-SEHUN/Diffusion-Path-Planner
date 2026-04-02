@@ -29,6 +29,11 @@ results_guidance/
 data/
 checkpoints/
 
+# Allow tracking diffusion_textguide dataset artifacts
+!DP_3D_costmap/3D_costmap/diffusion_textguide/data/
+!DP_3D_costmap/3D_costmap/diffusion_textguide/data/**
+!DP_3D_costmap/3D_costmap/diffusion_textguide/data/**/*.pt
+
 *.png
 *.pfm
 *.jpeg

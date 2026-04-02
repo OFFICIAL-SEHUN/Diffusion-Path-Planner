@@ -18,6 +18,11 @@ Usage:
   python -m experiment.eval_pareto \
       --config experiment/configs/pareto_sweep.yaml \
       --output-dir results/pareto
+
+  # Refined sweep (2nd stage, finer grid around prior best + higher caps)
+  python -m experiment.eval_pareto \
+      --config experiment/configs/pareto_sweep_refine.yaml \
+      --output-dir results/pareto_refine
 """
 
 import argparse

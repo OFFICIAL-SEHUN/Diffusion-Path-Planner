@@ -1,0 +1,51 @@
+# ─────────────────────────────────────────────────────────
+# Exp 1b — Refined Pareto sweep (2nd stage)
+# ─────────────────────────────────────────────────────────
+# Around balanced pick (α,β,γ,δ) ≈ (2.0, 1.5, 0.5, 2.0) from coarse grid,
+# with 0.1 steps and slightly *larger* α, β, δ than the old box max (2.0, 1.5, 2.0).
+# γ focuses on interior band 0.2–0.9 (coarse sweep already had 0, 0.1, 0.5, 1.0).
+#
+# Combinations: 8×7×8×8 = 3584  (× num_terrains × 6 intents path finds)
+# Quick test: set terrain.num_terrains to 10–20 in this file.
+#
+# Run (from diffusion_textguide/):
+#   python -m experiment.eval_pareto \
+#       --config experiment/configs/pareto_sweep_refine.yaml \
+#       --output-dir results/pareto_refine
+# ─────────────────────────────────────────────────────────
+
+terrain:
+  num_terrains: 30
+  img_size: 100
+  height_range: [0, 5]
+  terrain_scales: [[20, 10], [10, 5], [5, 2]]
+  limit_angle_deg: 25
+  pixel_resolution: 0.5
+  max_iterations: 20000
+
+sweep:
+  # Was capped at 2.0 in coarse sweep → explore up to 2.4
+  alpha: [1.7, 1.8, 1.9, 2.0, 2.1, 2.2, 2.3, 2.4]
+  # Was capped at 1.5 → explore up to 1.8
+  beta: [1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8]
+  # Interior resolution (0.1); coarse grid already covered low/high tails
+  gamma: [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+  # Was capped at 2.0 → explore up to 2.4
+  delta: [1.7, 1.8, 1.9, 2.0, 2.1, 2.2, 2.3, 2.4]
+
+intents:
+  - baseline
+  - left_bias
+  - right_bias
+  - avoid_steep
+  - prefer_flat
+  - via_flat_region
+
+horizon: 120
+risk_threshold_deg: 15.0
+seed: 42
+
+balanced_selection:
+  enabled: true
+  feasibility_min: 0.90
+  isr_min: 0.70

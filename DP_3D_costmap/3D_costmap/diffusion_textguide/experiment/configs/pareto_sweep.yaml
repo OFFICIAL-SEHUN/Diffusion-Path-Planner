@@ -1,9 +1,12 @@
 # ─────────────────────────────────────────────────────────
-# Exp 1 — Pareto Weight Sweep Configuration
+# Exp 1 — Pareto Weight Sweep Configuration (coarse grid, 192 combos)
+# ─────────────────────────────────────────────────────────
+# 2nd stage (~3584 combos, 0.1 near (2,1.5,0.5,2) + higher α,β,δ caps):
+#   experiment/configs/pareto_sweep_refine.yaml
 # ─────────────────────────────────────────────────────────
 
 terrain:
-  num_terrains: 50
+  num_terrains: 30
   img_size: 100
   height_range: [0, 5]
   terrain_scales: [[20, 10], [10, 5], [5, 2]]

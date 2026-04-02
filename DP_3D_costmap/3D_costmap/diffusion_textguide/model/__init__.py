@@ -3,6 +3,7 @@ from .network import (
     TextEncoder,
     VisualEncoder,
     VisualEncoderConvNeXt,
+    VisualEncoderTimm,
     VisualEncoderResNet,
 )
 from .diffusion import DiffusionScheduler

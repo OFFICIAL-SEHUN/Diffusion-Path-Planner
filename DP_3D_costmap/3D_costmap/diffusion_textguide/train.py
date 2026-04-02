@@ -143,6 +143,8 @@ def train(config: dict, data_dir: str, device_str: str = "cuda"):
         max_seq_len=max_seq_len,
         visual_backbone=m_cfg.get("visual_backbone", "convnext"),
         convnext_pretrained=m_cfg.get("convnext_pretrained", True),
+        timm_model_name=m_cfg.get("timm_model_name"),
+        timm_pretrained=m_cfg.get("timm_pretrained"),
     ).to(device)
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)

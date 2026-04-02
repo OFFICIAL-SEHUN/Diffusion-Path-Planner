@@ -2,7 +2,7 @@
 Text-conditioned Diffusion Path Model
 
 Architecture (from diffusion_patch, extended):
-  - Visual encoder: ConvNeXt-Tiny (timm, ImageNet pretrained) or ResNet-style CNN, [B,2,H,W] → [B, visual_dim]
+  - Visual encoder: timm backbone (e.g., ConvNeXt-Tiny / Swin-Tiny) or ResNet-style CNN, [B,2,H,W] → [B, visual_dim]
   - TextEncoder:   Embedding + Transformer, [B,L] → [B, text_dim]
   - CrossAttention: path features attend to text embedding
   - ConditionalPathModel: 1-D U-Net with FiLM conditioning
@@ -182,6 +182,11 @@ class VisualEncoderConvNeXt(nn.Module):
         return self.act(self.fc(x))
 
 
+class VisualEncoderTimm(VisualEncoderConvNeXt):
+    """Generic timm visual encoder wrapper (backward-compatible alias)."""
+    pass
+
+
 # Backward compatibility: historical module name
 VisualEncoder = VisualEncoderResNet
 
@@ -271,14 +276,27 @@ class ConditionalPathModel(nn.Module):
                  horizon: int = 120, visual_dim: int = 256,
                  text_dim: int = 256, vocab_size: int = 200,
                  max_seq_len: int = 16,
-                 visual_backbone: Literal["convnext", "resnet"] = "convnext",
-                 convnext_pretrained: bool = True):
+                 visual_backbone: Literal["convnext", "resnet", "swin_tiny"] = "convnext",
+                 convnext_pretrained: bool = True,
+                 timm_model_name: Optional[str] = None,
+                 timm_pretrained: Optional[bool] = None):
         super().__init__()
         time_dim = dim * 4
 
-        if visual_backbone == "convnext":
-            self.visual_encoder = VisualEncoderConvNeXt(
-                input_channels=2, feature_dim=visual_dim, pretrained=convnext_pretrained
+        use_timm_pretrained = convnext_pretrained if timm_pretrained is None else timm_pretrained
+        if visual_backbone in {"convnext", "swin_tiny"}:
+            backbone_name = timm_model_name
+            if backbone_name is None:
+                backbone_name = (
+                    "swin_tiny_patch4_window7_224"
+                    if visual_backbone == "swin_tiny"
+                    else "convnext_tiny"
+                )
+            self.visual_encoder = VisualEncoderTimm(
+                input_channels=2,
+                feature_dim=visual_dim,
+                pretrained=use_timm_pretrained,
+                model_name=backbone_name,
             )
         else:
             self.visual_encoder = VisualEncoderResNet(input_channels=2, feature_dim=visual_dim)

@@ -115,6 +115,8 @@ def load_model(
         max_seq_len=16,
         visual_backbone=backbone,
         convnext_pretrained=False,
+        timm_model_name=m_cfg.get("timm_model_name"),
+        timm_pretrained=False,
     ).to(device)
 
     try:

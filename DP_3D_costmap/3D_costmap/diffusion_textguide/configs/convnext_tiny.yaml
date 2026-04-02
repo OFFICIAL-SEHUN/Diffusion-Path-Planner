@@ -1,0 +1,64 @@
+# =============================================================================
+# Text-guided diffusion — ConvNeXt-Tiny visual backbone (timm, IN1K pretrained)
+# =============================================================================
+# Usage:
+#   python train.py --config configs/convnext_tiny.yaml --data-dir data/raw
+# Inference loads visual_backbone from checkpoint config; this file is for training defaults.
+# =============================================================================
+
+project_name: "DiffusionTextGuide_ConvNeXtTiny"
+seed: 42
+
+data:
+  num_samples: 100
+  paths_per_terrain: 100
+  img_size: 100
+  horizon: 120
+  cost_weight: 50.0
+  min_distance_factor: 1.5
+
+gradient:
+  height_range: [0, 5]
+  terrain_scales: [[20,10],[10,5],[5,2]]
+  mass: 10.0
+  gravity: 9.8
+  limit_angle_deg: 25
+  pixel_resolution: 0.5
+  max_iterations: 20000
+
+intent:
+  cost_weights:
+    # alpha: 1.0
+    # beta: 0.8
+    # gamma: 0.1
+    # delta: 1.0
+    alpha: 2.0
+    beta: 1.5
+    gamma: 0.5
+    delta: 2.0
+  risk_threshold_deg: 15.0
+
+diffusion:
+  timesteps: 200
+  beta_start: 0.0001
+  beta_end: 0.02
+
+# --- ConvNeXt-Tiny only (see model/network.py: VisualEncoderConvNeXt) ---
+model:
+  base_dim: 64
+  time_embed_dim: 256
+  image_feat_dim: 256
+  visual_backbone: convnext
+  convnext_pretrained: true
+
+training:
+  epochs: 10000
+  batch_size: 64
+  learning_rate: 0.00003
+  checkpoint_dir: "checkpoints/convnext_tiny"
+  model_name: "diffusion_textguide_convnext_tiny.pt"
+  log_interval: 1000       # checkpoint + train_vis more often than 10k
+  use_amp: true
+
+inference:
+  show_progress: true

@@ -2,7 +2,7 @@
 Text-conditioned Diffusion Path Model
 
 Architecture (from diffusion_patch, extended):
-  - VisualEncoder: ResNet-like CNN, [B,2,H,W] → [B, visual_dim]
+  - Visual encoder: ConvNeXt-Tiny (timm, ImageNet pretrained) or ResNet-style CNN, [B,2,H,W] → [B, visual_dim]
   - TextEncoder:   Embedding + Transformer, [B,L] → [B, text_dim]
   - CrossAttention: path features attend to text embedding
   - ConditionalPathModel: 1-D U-Net with FiLM conditioning
@@ -16,7 +16,9 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, Tuple
+from typing import Literal, Optional, Tuple
+
+import timm
 
 
 # ============================================================================
@@ -25,7 +27,7 @@ from typing import Optional, Tuple
 
 class SinusoidalPositionEmbeddings(nn.Module):
     def __init__(self, dim: int):
-        super().__init__()
+        super().__init__() 
         self.dim = dim
 
     def forward(self, time: torch.Tensor) -> torch.Tensor:
@@ -107,10 +109,12 @@ class BasicBlock2D(nn.Module):
 
 
 # ============================================================================
-# VisualEncoder  [B, 2, H, W] → [B, feature_dim]
+# Visual encoders  [B, 2, H, W] → [B, feature_dim]
 # ============================================================================
 
-class VisualEncoder(nn.Module):
+class VisualEncoderResNet(nn.Module):
+    """Lightweight ResNet-style encoder (from scratch, no ImageNet weights)."""
+
     def __init__(self, input_channels: int = 2, feature_dim: int = 256):
         super().__init__()
         self.conv1 = nn.Conv2d(input_channels, 64, 7, stride=2, padding=3, bias=False)
@@ -147,6 +151,39 @@ class VisualEncoder(nn.Module):
         x = self.layer4(x)
         x = self.avgpool(x).flatten(1)
         return self.act(self.fc(x))
+
+
+class VisualEncoderConvNeXt(nn.Module):
+    """ConvNeXt-Tiny from timm with ImageNet-1K pretrained weights (via timm hub)."""
+
+    def __init__(
+        self,
+        input_channels: int = 2,
+        feature_dim: int = 256,
+        pretrained: bool = True,
+        model_name: str = "convnext_tiny",
+    ):
+        super().__init__()
+        self.backbone = timm.create_model(
+            model_name,
+            pretrained=pretrained,
+            num_classes=0,
+            global_pool="avg",
+            in_chans=input_channels,
+        )
+        in_features = self.backbone.num_features
+        self.fc = nn.Linear(in_features, feature_dim)
+        self.act = nn.SiLU()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.backbone(x)
+        if x.dim() == 4:
+            x = x.flatten(1)
+        return self.act(self.fc(x))
+
+
+# Backward compatibility: historical module name
+VisualEncoder = VisualEncoderResNet
 
 
 # ============================================================================
@@ -233,11 +270,18 @@ class ConditionalPathModel(nn.Module):
     def __init__(self, transition_dim: int = 2, dim: int = 64,
                  horizon: int = 120, visual_dim: int = 256,
                  text_dim: int = 256, vocab_size: int = 200,
-                 max_seq_len: int = 16):
+                 max_seq_len: int = 16,
+                 visual_backbone: Literal["convnext", "resnet"] = "convnext",
+                 convnext_pretrained: bool = True):
         super().__init__()
         time_dim = dim * 4
 
-        self.visual_encoder = VisualEncoder(input_channels=2, feature_dim=visual_dim)
+        if visual_backbone == "convnext":
+            self.visual_encoder = VisualEncoderConvNeXt(
+                input_channels=2, feature_dim=visual_dim, pretrained=convnext_pretrained
+            )
+        else:
+            self.visual_encoder = VisualEncoderResNet(input_channels=2, feature_dim=visual_dim)
         self.text_encoder = TextEncoder(vocab_size=vocab_size, embed_dim=text_dim,
                                         max_seq_len=max_seq_len)
 

@@ -1,0 +1,13 @@
+# ─────────────────────────────────────────────────────────
+# Exp 2 — Inner Module Ablation Configuration
+# ─────────────────────────────────────────────────────────
+
+checkpoint: "checkpoints/final_model.pt"
+data_dir: "data/raw"
+output_dir: "results/ablation"
+
+max_samples: 200
+device: "cuda"
+
+# Ablation modes evaluated (hard-coded in eval_ablation.py):
+#   full, wo_text, wo_cross_attn, wo_structured_intent, visual_resnet

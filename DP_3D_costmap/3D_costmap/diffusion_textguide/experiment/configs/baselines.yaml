@@ -1,0 +1,18 @@
+# ─────────────────────────────────────────────────────────
+# Exp 3 — External Comparison Configuration
+# ─────────────────────────────────────────────────────────
+
+checkpoint: "checkpoints/final_model.pt"
+data_dir: "data/raw"
+output_dir: "results/baselines"
+
+max_terrains: 50
+device: "cuda"
+
+# Baselines (hard-coded in eval_baselines.py):
+#   distance_only_astar  — α=1, β=γ=δ=0
+#   slope_aware_astar    — α=1, γ=0.5, β=δ=0
+#   cot_aware_astar      — α=1, β=0.8, γ=δ=0
+#   full_intent_astar    — α=1, β=0.8, γ=0.1, δ=1 (oracle)
+#   diffusion_full       — our model (text-conditioned)
+#   diffusion_no_text    — diffusion without text input

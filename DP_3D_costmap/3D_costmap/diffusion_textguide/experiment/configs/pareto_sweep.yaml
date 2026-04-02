@@ -1,0 +1,50 @@
+# ─────────────────────────────────────────────────────────
+# Exp 1 — Pareto Weight Sweep Configuration
+# ─────────────────────────────────────────────────────────
+
+terrain:
+  num_terrains: 50
+  img_size: 100
+  height_range: [0, 5]
+  terrain_scales: [[20, 10], [10, 5], [5, 2]]
+  limit_angle_deg: 25
+  pixel_resolution: 0.5
+  max_iterations: 20000
+
+# Cartesian product of these lists → all (α,β,γ,δ) combos
+sweep:
+  alpha: [0.5, 1.0, 2.0]
+  beta:  [0.0, 0.4, 0.8, 1.5]
+  gamma: [0.0, 0.1, 0.5, 1.0]
+  delta: [0.0, 0.5, 1.0, 2.0]
+
+intents:
+  - baseline
+  - left_bias
+  - right_bias
+  - avoid_steep
+  - prefer_flat
+  - via_flat_region
+
+horizon: 120
+risk_threshold_deg: 15.0
+seed: 42
+
+# ── Balanced selection (recommended) ──
+# Step 1: per-intent floors — every intent must individually pass
+#          feasibility ≥ 0.90  AND  ISR ≥ 0.70
+# Step 2: among survivors, normalise (CoT↓, Risk↓, ISR↑) to [0,1],
+#          pick the point closest to the utopia corner (all-best).
+#          → "most balanced" weight, not biased toward any single metric.
+balanced_selection:
+  enabled: true
+  feasibility_min: 0.90   # per intent (not average)
+  isr_min: 0.70           # per intent (not average)
+
+# ── Constrained min-CoT (optional, disabled by default) ──
+# Keeps tuples where aggregated feasibility/ISR pass floors, then min CoT.
+# constrained_selection:
+#   enabled: true
+#   feasibility_min: 0.95
+#   isr_min: 0.80
+#   aggregate: mean   # mean | min

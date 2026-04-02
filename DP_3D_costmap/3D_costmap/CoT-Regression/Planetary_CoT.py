@@ -43,9 +43,9 @@ plt.legend()
 
 # 최저점(에너지 효율이 가장 좋은 지점) 표시
 min_idx = np.argmin(y_cot)
-plt.annotate(f'Min CoT: {y_cot[min_idx]:.2f} at {x_range[min_idx]:.1f}°', 
-             xy=(x_range[min_idx], y_cot[min_idx]), 
-             xytext=(x_range[min_idx]+2, y_cot[min_idx]+0.2),
-             arrowprops=dict(facecolor='black', shrink=0.05, width=1, headwidth=5))
+# plt.annotate(f'Min CoT: {y_cot[min_idx]:.2f} at {x_range[min_idx]:.1f}°', 
+#              xy=(x_range[min_idx], y_cot[min_idx]), 
+#              xytext=(x_range[min_idx]+2, y_cot[min_idx]+0.2),
+#              arrowprops=dict(facecolor='black', shrink=0.05, width=1, headwidth=5))
 
 plt.show()

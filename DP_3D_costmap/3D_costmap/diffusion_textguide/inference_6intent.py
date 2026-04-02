@@ -1,10 +1,10 @@
 """
-Text-conditioned Diffusion Path Planner — Inference Script
+6-Intent Inference — Height map (row 1) + Slope map (row 2), 6 intents per row.
 
 Usage:
-  python inference.py --checkpoint checkpoints/final_model.pt \
-                      --terrain data/raw/terrain_00001.pt \
-                      --instruction "Stay to the left side"
+  python inference_6intent.py --checkpoint checkpoints/sample40k/final_model.pt \
+                              --terrain data/raw/terrain_00087.pt \
+                              --output results/inference_6intent.png
 """
 
 import argparse
@@ -22,6 +22,33 @@ sys.path.insert(0, str(_ROOT))
 from model.network import ConditionalPathModel
 from model.diffusion import DiffusionScheduler
 from data_loader import text_to_tokens
+
+INTENTS = [
+    ("baseline",        "Navigate along the default route"),
+    ("left_bias",       "Stay to the left side"),
+    ("right_bias",      "Stay to the right side"),
+    ("avoid_steep",     "Avoid steep slopes"),
+    ("prefer_flat",     "Choose the most level path available"),
+    ("via_flat_region", "Pass through a flat midpoint region"),
+]
+
+INTENT_LABELS = [
+    "Baseline",
+    "Left bias",
+    "Right bias",
+    "Avoid steep",
+    "Prefer flat",
+    "Via flat region",
+]
+
+PATH_COLORS = [
+    "#E63946",  # red
+    "#E63946",  # steel blue
+    "#E63946",  # teal
+    "#E63946",  # gold
+    "#E63946",  # sandy orange
+    "#E63946",  # dark teal
+]
 
 
 def load_model(ckpt_path: str, device: torch.device):
@@ -68,7 +95,6 @@ def load_model(ckpt_path: str, device: torch.device):
 
 def run_inference(model, scheduler, costmap, start_pos, goal_pos,
                   text_tokens, horizon, device):
-    """단일 instruction에 대해 경로 샘플링."""
     costmap_t = costmap.unsqueeze(0).to(device)
     start_t = start_pos.unsqueeze(0).to(device)
     goal_t = goal_pos.unsqueeze(0).to(device)
@@ -77,66 +103,59 @@ def run_inference(model, scheduler, costmap, start_pos, goal_pos,
     path = scheduler.sample(
         model, costmap_t, shape=(1, horizon, 2),
         start_pos=start_t, end_pos=goal_t,
-        text_tokens=tokens_t, show_progress=True,
+        text_tokens=tokens_t, show_progress=False,
     )
     return path[0].cpu().numpy()
 
 
-def visualize_result(slope_map, height_map, gt_paths, gen_path, instruction,
-                     img_size, out_path=None, show_gt=True, terrain_note=None):
-    """슬로프맵 + 하이트맵 둘 다에 경로를 오버레이해서 보여줌.
-    show_gt=False면 학습/데이터에 있던 reference path(pseudo label)는 그리지 않음.
-    terrain_note: e.g. 'Unseen terrain' → 제목에 표시해 어떤 조건인지 구분.
-    """
-    fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+def visualize_6intent(height_map, slope_map, gen_paths, gt_paths, img_size,
+                      out_path, show_gt=True, terrain_note=None):
+    """Row 1: Height map × 6 intents, Row 2: Slope map × 6 intents."""
+    n = len(INTENTS)
+    fig, axes = plt.subplots(2, n, figsize=(4.0 * n, 8.5))
 
     def to_px(p):
         return (p + 1) / 2 * img_size
 
     draw_gt = show_gt and gt_paths is not None
 
-    # Slope map (deg)
-    ax0 = axes[0]
-    im0 = ax0.imshow(slope_map, cmap="jet", origin="lower", vmin=0, vmax=35)
-    if draw_gt:
-        for i, gp in enumerate(gt_paths):
-            ax0.plot(*to_px(gp).T, "g-", lw=1.5, alpha=0.4,
-                     label="Reference (pseudo)" if i == 0 else None)
-    gen_px = to_px(gen_path)
-    ax0.plot(gen_px[:, 0], gen_px[:, 1], "r-", lw=2.0, alpha=0.9, label="Generated")
-    ax0.scatter([gen_px[0, 0]], [gen_px[0, 1]], c="lime", s=60, zorder=10, marker="o",
-                edgecolors="black", label="Start")
-    ax0.scatter([gen_px[-1, 0]], [gen_px[-1, 1]], c="orange", s=60, zorder=10, marker="*",
-                edgecolors="black", label="Goal")
-    ax0.set_title("Slope map (deg)", fontsize=15)
-    ax0.axis("off")
-    fig.colorbar(im0, ax=ax0, fraction=0.046, pad=0.02)
+    row_configs = [
+        (height_map, "terrain", None, None, "Height map"),
+        (slope_map,  "jet",     0,    35,   "Slope map (deg)"),
+    ]
 
-    # Height map
-    ax1 = axes[1]
-    im1 = ax1.imshow(height_map, cmap="terrain", origin="lower")
-    if draw_gt:
-        for gp in gt_paths:
-            px = to_px(gp)
-            ax1.plot(px[:, 0], px[:, 1], "g-", lw=1.5, alpha=0.4)
-    ax1.plot(gen_px[:, 0], gen_px[:, 1], "r-", lw=2.0, alpha=0.9, label="Generated")
-    ax1.scatter([gen_px[0, 0]], [gen_px[0, 1]], c="lime", s=60, zorder=10, marker="o",
-                edgecolors="black", label="Start")
-    ax1.scatter([gen_px[-1, 0]], [gen_px[-1, 1]], c="orange", s=60, zorder=10, marker="*",
-                edgecolors="black", label="Goal")
-    ax1.set_title("Height map", fontsize=15)
-    ax1.axis("off")
+    for row, (bg_map, cmap, vmin, vmax, row_label) in enumerate(row_configs):
+        for col in range(n):
+            ax = axes[row, col]
+            ax.imshow(bg_map, cmap=cmap, origin="lower", vmin=vmin, vmax=vmax)
 
-    handles, labels = ax0.get_legend_handles_labels()
-    if handles:
-        ax0.legend(handles, labels, loc="lower right", fontsize=10, framealpha=0.8)
-    title = f'Instruction: "{instruction}"'
+            gen_px = to_px(gen_paths[col])
+            ax.plot(gen_px[:, 0], gen_px[:, 1], color=PATH_COLORS[col],
+                    lw=2.2, alpha=0.95,
+                    label="Generated" if col == 0 and row == 0 else None)
+            ax.scatter([gen_px[0, 0]], [gen_px[0, 1]], c="lime", s=50,
+                       zorder=10, marker="o", edgecolors="black", linewidths=0.8)
+            ax.scatter([gen_px[-1, 0]], [gen_px[-1, 1]], c="orange", s=50,
+                       zorder=10, marker="*", edgecolors="black", linewidths=0.8)
+
+            if row == 0:
+                ax.set_title(INTENT_LABELS[col], fontsize=13, fontweight="bold")
+            ax.set_xticks([])
+            ax.set_yticks([])
+            for spine in ax.spines.values():
+                spine.set_visible(False)
+
+        axes[row, 0].set_ylabel(row_label, fontsize=13, fontweight="bold",
+                                labelpad=10)
+
+    suptitle = "6-Intent Comparison"
     if terrain_note:
-        title += f"  ·  {terrain_note}"
-    fig.suptitle(title, fontsize=20)
+        suptitle += f"  ·  {terrain_note}"
+    fig.suptitle(suptitle, fontsize=18, fontweight="bold", y=1.01)
 
+    fig.tight_layout()
     if out_path:
-        fig.savefig(out_path, dpi=120, bbox_inches="tight")
+        fig.savefig(out_path, dpi=150, bbox_inches="tight")
         print(f"Saved: {out_path}")
     plt.close(fig)
 
@@ -146,26 +165,24 @@ def main():
     ap.add_argument("--checkpoint", type=str, required=True)
     ap.add_argument("--terrain", type=str, required=True,
                     help=".pt terrain file")
-    ap.add_argument("--instruction", type=str, required=True,
-                    help='e.g. "Stay to the left side"')
     ap.add_argument("--output", type=str, default=None)
     ap.add_argument("--device", type=str, default="cuda")
     ap.add_argument("--no-gt", action="store_true",
-                    help="Do not draw reference path (pseudo label) even if present in terrain")
+                    help="Do not draw reference paths")
     ap.add_argument("--terrain-note", type=str, default=None,
-                    help="e.g. 'Unseen terrain' — shown in plot title")
+                    help="e.g. 'Unseen terrain' — shown in title")
     args = ap.parse_args()
 
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
 
     model, scheduler, vocab, config = load_model(args.checkpoint, device)
     horizon = config.get("data", {}).get("horizon", 120)
-    print("[Config] Model, diffusion, horizon from checkpoint (training config)")
+    print(f"[Config] horizon={horizon}, device={device}")
 
     terrain = torch.load(args.terrain, map_location="cpu", weights_only=False)
     costmap = terrain["costmap"]
-    slope_map = terrain["slope_map"].numpy()
     height_map = terrain["height_map"].numpy()
+    slope_map = terrain["slope_map"].numpy()
     img_size = int(terrain["img_size"])
     gt_paths = terrain["paths"].numpy() if "paths" in terrain else None
 
@@ -182,18 +199,17 @@ def main():
     else:
         raise ValueError("No start/goal found in terrain file")
 
-    tokens = text_to_tokens(args.instruction, vocab, max_seq_len=16)
-
-    print(f"Instruction: \"{args.instruction}\"")
-    print(f"Start: {start_pos.numpy()}, Goal: {goal_pos.numpy()}")
-
-    gen_path = run_inference(model, scheduler, costmap, start_pos, goal_pos,
+    gen_paths = []
+    for intent_type, instruction in INTENTS:
+        tokens = text_to_tokens(instruction, vocab, max_seq_len=16)
+        print(f"[{intent_type:20s}] \"{instruction}\"")
+        path = run_inference(model, scheduler, costmap, start_pos, goal_pos,
                              tokens, horizon, device)
+        gen_paths.append(path)
 
-    out_path = args.output or str(_ROOT / "results" / "inference_output.png")
-    visualize_result(
-        slope_map, height_map, gt_paths, gen_path, args.instruction,
-        img_size, out_path,
+    out_path = args.output or str(_ROOT / "results" / "inference_6intent.png")
+    visualize_6intent(
+        height_map, slope_map, gen_paths, gt_paths, img_size, out_path,
         show_gt=not args.no_gt,
         terrain_note=args.terrain_note,
     )

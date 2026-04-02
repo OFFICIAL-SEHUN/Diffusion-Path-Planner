@@ -1,0 +1,31 @@
+# ─────────────────────────────────────────────────────────
+# Exp 4 — Pseudo-label Similarity Configuration
+# ─────────────────────────────────────────────────────────
+#
+# data/raw     — training distribution (seen if the model was trained on it).
+# data/valid   — hold-out terrains; treat as unseen generalization.
+#
+# Run from diffusion_textguide/:
+#   python -m experiment.eval_similarity --checkpoint <ckpt> --data-dir data/raw \
+#       --unseen-data-dir data/valid --run-both --output-dir results/similarity
+#
+# Outputs with --run-both:
+#   similarity_results_seen.json, similarity_results_unseen.json
+#   similarity_boxplots_{seen,unseen}.png, cost_gap_hist_*.png, isr_comparison_*.png
+#
+# ─────────────────────────────────────────────────────────
+
+checkpoint: "checkpoints/final_model.pt"
+data_dir: "data/raw"
+valid_data_dir: "data/valid"
+output_dir: "results/similarity"
+
+max_terrains: 100
+device: "cuda"
+
+# Metrics computed:
+#   pointwise_l2, chamfer, frechet
+#   edge_cost (gen & ref), cost_gap
+#   ISR (gen & ref), per-intent agreement
+#   side-bias / via / avoid-steep success + agreement
+#   instruction adherence gap (per-intent sub-metric delta)

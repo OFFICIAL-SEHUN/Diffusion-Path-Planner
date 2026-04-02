@@ -12,6 +12,7 @@ import yaml
 import numpy as np
 import torch
 import torch.nn.functional as F
+from torch.cuda.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
 from pathlib import Path
 from tqdm import tqdm
@@ -33,14 +34,17 @@ def load_config(path: str) -> dict:
         return yaml.safe_load(f)
 
 
-def save_checkpoint(model, optimizer, epoch, vocab, config, path):
-    torch.save({
+def save_checkpoint(model, optimizer, epoch, vocab, config, path, scaler=None):
+    payload = {
         "epoch": epoch,
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "vocab": vocab,
         "config": config,
-    }, path)
+    }
+    if scaler is not None:
+        payload["scaler_state_dict"] = scaler.state_dict()
+    torch.save(payload, path)
 
 
 @torch.no_grad()
@@ -137,6 +141,8 @@ def train(config: dict, data_dir: str, device_str: str = "cuda"):
         text_dim=256,
         vocab_size=dataset.vocab_size,
         max_seq_len=max_seq_len,
+        visual_backbone=m_cfg.get("visual_backbone", "convnext"),
+        convnext_pretrained=m_cfg.get("convnext_pretrained", True),
     ).to(device)
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -155,7 +161,9 @@ def train(config: dict, data_dir: str, device_str: str = "cuda"):
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     epochs = t_cfg.get("epochs", 5000)
-    log_interval = t_cfg.get("log_interval", 500)
+    log_interval = t_cfg.get("log_interval", 1000)
+    use_amp = t_cfg.get("use_amp", True) and device.type == "cuda"
+    scaler = GradScaler(enabled=use_amp)
     ckpt_dir = str(_ROOT / t_cfg.get("checkpoint_dir", "checkpoints"))
     vis_dir = str(_ROOT / "results" / "train_vis")
     os.makedirs(ckpt_dir, exist_ok=True)
@@ -175,8 +183,9 @@ def train(config: dict, data_dir: str, device_str: str = "cuda"):
 
     # --- Training loop ---
     print(f"\nTraining: {epochs} epochs, batch_size={batch_size}, lr={lr}")
+    print(f"AMP (fp16): {'on' if use_amp else 'off'}")
+    print(f"Checkpoint every {log_interval} epochs → {ckpt_dir}")
     print(f"Dataset: {len(dataset)} samples, vocab_size={dataset.vocab_size}")
-    print(f"Checkpoints: {ckpt_dir}")
     print("=" * 60)
 
     global_step = 0
@@ -197,16 +206,25 @@ def train(config: dict, data_dir: str, device_str: str = "cuda"):
             t = torch.randint(0, scheduler.timesteps, (B,), device=device)
             noisy_paths, noise = scheduler.forward_process(paths, t)
 
-            pred_noise = model(noisy_paths, t, costmaps,
-                               start_pos=start_pos, goal_pos=goal_pos,
-                               text_tokens=tokens)
+            optimizer.zero_grad(set_to_none=True)
+            with autocast(enabled=use_amp):
+                pred_noise = model(
+                    noisy_paths, t, costmaps,
+                    start_pos=start_pos, goal_pos=goal_pos,
+                    text_tokens=tokens,
+                )
+                loss = F.mse_loss(pred_noise, noise)
 
-            loss = F.mse_loss(pred_noise, noise)
-
-            optimizer.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
+            if use_amp:
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                optimizer.step()
 
             epoch_loss += loss.item()
             n_batches += 1
@@ -225,13 +243,19 @@ def train(config: dict, data_dir: str, device_str: str = "cuda"):
 
         if epoch % log_interval == 0:
             ckpt_path = os.path.join(ckpt_dir, f"epoch_{epoch:05d}.pt")
-            save_checkpoint(model, optimizer, epoch, vocab, config, ckpt_path)
+            save_checkpoint(
+                model, optimizer, epoch, vocab, config, ckpt_path,
+                scaler=scaler if use_amp else None,
+            )
             print(f"  → Saved checkpoint: {ckpt_path}")
             visualize_sample(model, scheduler, dataset, epoch, device, vis_dir)
 
     # Final save
     final_path = os.path.join(ckpt_dir, "final_model.pt")
-    save_checkpoint(model, optimizer, epochs, vocab, config, final_path)
+    save_checkpoint(
+        model, optimizer, epochs, vocab, config, final_path,
+        scaler=scaler if use_amp else None,
+    )
     print(f"\nTraining complete. Final model: {final_path}")
 
     if use_wandb:

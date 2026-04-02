@@ -172,7 +172,7 @@ def train(config: dict, data_dir: str, device_str: str = "cuda"):
     os.makedirs(ckpt_dir, exist_ok=True)
 
     # --- WandB (optional) ---
-    use_wandb = True
+    use_wandb = False
     try:
         import wandb
         run = wandb.init(project="diffusion-textguide", config=config)
@@ -182,6 +182,7 @@ def train(config: dict, data_dir: str, device_str: str = "cuda"):
         elif run is None:
             print("WandB not available, logging to stdout only")
     except Exception as e:
+        use_wandb = False
         print("WandB not available, logging to stdout only:", e)
 
     # --- Training loop ---
@@ -238,8 +239,9 @@ def train(config: dict, data_dir: str, device_str: str = "cuda"):
         if use_wandb:
             try:
                 wandb.log({"train_loss": avg_loss, "epoch": epoch}, step=global_step)
-            except AttributeError:
+            except Exception:
                 use_wandb = False
+                print("WandB logging disabled after error; continuing training on stdout only.")
 
         if epoch % 50 == 0 or epoch == 1:
             print(f"Epoch {epoch:5d}/{epochs}  loss={avg_loss:.6f}")
@@ -262,7 +264,10 @@ def train(config: dict, data_dir: str, device_str: str = "cuda"):
     print(f"\nTraining complete. Final model: {final_path}")
 
     if use_wandb:
-        wandb.finish()
+        try:
+            wandb.finish()
+        except Exception:
+            pass
 
 
 def main():

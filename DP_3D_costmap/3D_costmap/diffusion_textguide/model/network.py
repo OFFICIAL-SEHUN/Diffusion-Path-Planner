@@ -153,8 +153,8 @@ class VisualEncoderResNet(nn.Module):
         return self.act(self.fc(x))
 
 
-class VisualEncoderConvNeXt(nn.Module):
-    """ConvNeXt-Tiny from timm with ImageNet-1K pretrained weights (via timm hub)."""
+class VisualEncoderTimm(nn.Module):
+    """Generic timm visual encoder wrapper (e.g., ConvNeXt/Swin)."""
 
     def __init__(
         self,
@@ -162,14 +162,22 @@ class VisualEncoderConvNeXt(nn.Module):
         feature_dim: int = 256,
         pretrained: bool = True,
         model_name: str = "convnext_tiny",
+        input_img_size: Optional[int] = None,
     ):
         super().__init__()
-        self.backbone = timm.create_model(
-            model_name,
+        create_kwargs = dict(
             pretrained=pretrained,
             num_classes=0,
             global_pool="avg",
             in_chans=input_channels,
+        )
+        # Swin in timm validates input spatial size against model img_size.
+        # Set it from config so non-224 terrains (e.g., 100x100) are supported.
+        if input_img_size is not None and "swin" in model_name.lower():
+            create_kwargs["img_size"] = input_img_size
+        self.backbone = timm.create_model(
+            model_name,
+            **create_kwargs,
         )
         in_features = self.backbone.num_features
         self.fc = nn.Linear(in_features, feature_dim)
@@ -182,8 +190,8 @@ class VisualEncoderConvNeXt(nn.Module):
         return self.act(self.fc(x))
 
 
-class VisualEncoderTimm(VisualEncoderConvNeXt):
-    """Generic timm visual encoder wrapper (backward-compatible alias)."""
+class VisualEncoderConvNeXt(VisualEncoderTimm):
+    """Backward-compatible alias for older imports."""
     pass
 
 
@@ -277,13 +285,17 @@ class ConditionalPathModel(nn.Module):
                  text_dim: int = 256, vocab_size: int = 200,
                  max_seq_len: int = 16,
                  visual_backbone: Literal["convnext", "resnet", "swin_tiny"] = "convnext",
-                 convnext_pretrained: bool = True,
+                 visual_pretrained: bool = True,
                  timm_model_name: Optional[str] = None,
-                 timm_pretrained: Optional[bool] = None):
+                 timm_pretrained: Optional[bool] = None,
+                 convnext_pretrained: Optional[bool] = None,
+                 input_img_size: Optional[int] = None):
         super().__init__()
         time_dim = dim * 4
 
-        use_timm_pretrained = convnext_pretrained if timm_pretrained is None else timm_pretrained
+        # Legacy support: older configs may still carry `convnext_pretrained`.
+        base_pretrained = visual_pretrained if convnext_pretrained is None else convnext_pretrained
+        use_timm_pretrained = base_pretrained if timm_pretrained is None else timm_pretrained
         if visual_backbone in {"convnext", "swin_tiny"}:
             backbone_name = timm_model_name
             if backbone_name is None:
@@ -297,6 +309,7 @@ class ConditionalPathModel(nn.Module):
                 feature_dim=visual_dim,
                 pretrained=use_timm_pretrained,
                 model_name=backbone_name,
+                input_img_size=input_img_size,
             )
         else:
             self.visual_encoder = VisualEncoderResNet(input_channels=2, feature_dim=visual_dim)

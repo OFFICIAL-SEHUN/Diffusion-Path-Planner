@@ -41,7 +41,7 @@ diffusion:
 
 # --- Swin-Tiny only (timm model: swin_tiny_patch4_window7_224) ---
 model:
-  base_dim: 64
+  base_dim: 128
   time_embed_dim: 256
   image_feat_dim: 256
   visual_backbone: swin_tiny

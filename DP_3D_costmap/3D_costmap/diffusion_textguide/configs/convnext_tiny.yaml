@@ -43,13 +43,14 @@ diffusion:
   beta_start: 0.0001
   beta_end: 0.02
 
-# --- ConvNeXt-Tiny only (see model/network.py: VisualEncoderConvNeXt) ---
+# --- timm visual backbone ---
 model:
-  base_dim: 64
+  base_dim: 128
   time_embed_dim: 256
   image_feat_dim: 256
   visual_backbone: convnext
-  convnext_pretrained: true
+  timm_model_name: convnext_tiny
+  timm_pretrained: true
 
 training:
   epochs: 10000

@@ -78,9 +78,10 @@ def load_model(ckpt_path: str, device: torch.device):
         vocab_size=len(vocab),
         max_seq_len=16,
         visual_backbone=visual_backbone,
-        convnext_pretrained=False,
+        visual_pretrained=False,
         timm_model_name=m_cfg.get("timm_model_name"),
         timm_pretrained=False,
+        input_img_size=d_cfg.get("img_size"),
     ).to(device)
     model.load_state_dict(state_dict)
     model.eval()

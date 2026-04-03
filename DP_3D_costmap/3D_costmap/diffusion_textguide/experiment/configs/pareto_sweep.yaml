@@ -16,18 +16,31 @@ terrain:
 
 # Cartesian product of these lists → all (α,β,γ,δ) combos
 sweep:
-  alpha: [0.5, 1.0, 2.0]
-  beta:  [0.0, 0.4, 0.8, 1.5]
-  gamma: [0.0, 0.1, 0.5, 1.0]
-  delta: [0.0, 0.5, 1.0, 2.0]
+  # alpha: [0.5, 1.0, 2.0]
+  # beta:  [0.0, 0.4, 0.8, 1.5]
+  # gamma: [0.0, 0.1, 0.5, 1.0]
+  # delta: [0.0, 0.5, 1.0, 2.0]
+  alpha: [0.5, 1.0, 2.0, 2.4]
+  beta:  [0.0, 0.4, 0.8, 1.5, 1.7, 1.8]
+  gamma: [0.1, 0.2, 0.3, 0.4, 0.5]
+  delta: [2.0, 2.1, 2.2, 2.3, 2.4]
 
+# Mirrors scripts/generate_data.py INTENT_CATALOG (keep in sync).
 intents:
   - baseline
   - left_bias
   - right_bias
+  - center_bias
   - avoid_steep
   - prefer_flat
-  - via_flat_region
+  - minimize_elevation_change
+  - short_path
+  - energy_efficient
+  - left_bias+avoid_steep
+  - right_bias+prefer_flat
+  - center_bias+prefer_flat
+  - short_path+avoid_steep
+  - energy_efficient+minimize_elevation_change
 
 horizon: 120
 risk_threshold_deg: 15.0

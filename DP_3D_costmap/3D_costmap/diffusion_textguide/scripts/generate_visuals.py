@@ -25,11 +25,17 @@ INTENT_COLORS = {
     "baseline":               "#888888",
     "left_bias":              "#E63946",
     "right_bias":             "#457B9D",
+    "center_bias":            "#BC6C25",
     "avoid_steep":            "#2A9D8F",
     "prefer_flat":            "#E9C46A",
-    "via_flat_region":        "#F4A261",
+    "minimize_elevation_change": "#6D597A",
+    "short_path":             "#355070",
+    "energy_efficient":       "#43AA8B",
     "left_bias+avoid_steep":  "#9B2226",
     "right_bias+prefer_flat": "#264653",
+    "center_bias+prefer_flat": "#8D6E63",
+    "short_path+avoid_steep": "#1565C0",
+    "energy_efficient+minimize_elevation_change": "#00695C",
 }
 
 WEIGHT_COLORS = {

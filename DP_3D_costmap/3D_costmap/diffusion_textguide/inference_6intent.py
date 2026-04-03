@@ -1,5 +1,7 @@
 """
-6-Intent Inference — Height map (row 1) + Slope map (row 2), 6 intents per row.
+Multi-intent inference — Height map (row 1) + Slope map (row 2), one column per intent.
+
+Intent list follows ``scripts.generate_data.INTENT_CATALOG``; first instruction template each.
 
 Usage:
   python inference_6intent.py --checkpoint checkpoints/sample40k/final_model.pt \
@@ -22,33 +24,28 @@ sys.path.insert(0, str(_ROOT))
 from model.network import ConditionalPathModel
 from model.diffusion import DiffusionScheduler
 from data_loader import text_to_tokens
+from scripts.generate_data import INTENT_CATALOG, INSTRUCTION_TEMPLATES
 
-INTENTS = [
-    ("baseline",        "Navigate along the default route"),
-    ("left_bias",       "Stay to the left side"),
-    ("right_bias",      "Stay to the right side"),
-    ("avoid_steep",     "Avoid steep slopes"),
-    ("prefer_flat",     "Choose the most level path available"),
-    ("via_flat_region", "Pass through a flat midpoint region"),
-]
+
+def _first_instruction(itype: str) -> str:
+    templates = INSTRUCTION_TEMPLATES.get(itype)
+    if templates:
+        return templates[0]
+    combined = []
+    for p in itype.split("+"):
+        ts = INSTRUCTION_TEMPLATES.get(p, [])
+        if ts:
+            combined.append(ts[0])
+    return " 그리고 ".join(combined) if combined else itype
+
+
+INTENTS = [(e["type"], _first_instruction(e["type"])) for e in INTENT_CATALOG]
 
 INTENT_LABELS = [
-    "Baseline",
-    "Left bias",
-    "Right bias",
-    "Avoid steep",
-    "Prefer flat",
-    "Via flat region",
+    t.replace("_", " ").replace("+", " + ").title() for t, _ in INTENTS
 ]
 
-PATH_COLORS = [
-    "#E63946",  # red
-    "#E63946",  # steel blue
-    "#E63946",  # teal
-    "#E63946",  # gold
-    "#E63946",  # sandy orange
-    "#E63946",  # dark teal
-]
+PATH_COLORS = ["#E63946"] * len(INTENTS)
 
 
 def load_model(ckpt_path: str, device: torch.device):
@@ -113,9 +110,9 @@ def run_inference(model, scheduler, costmap, start_pos, goal_pos,
 
 def visualize_6intent(height_map, slope_map, gen_paths, gt_paths, img_size,
                       out_path, show_gt=True, terrain_note=None):
-    """Row 1: Height map × 6 intents, Row 2: Slope map × 6 intents."""
+    """Row 1: Height map × N intents, Row 2: Slope map × N intents."""
     n = len(INTENTS)
-    fig, axes = plt.subplots(2, n, figsize=(4.0 * n, 8.5))
+    fig, axes = plt.subplots(2, n, figsize=(min(4.0 * n, 56), 8.5))
 
     def to_px(p):
         return (p + 1) / 2 * img_size
@@ -142,7 +139,8 @@ def visualize_6intent(height_map, slope_map, gen_paths, gt_paths, img_size,
                        zorder=10, marker="*", edgecolors="black", linewidths=0.8)
 
             if row == 0:
-                ax.set_title(INTENT_LABELS[col], fontsize=13, fontweight="bold")
+                fs = max(7, min(13, 220 // max(n, 1)))
+                ax.set_title(INTENT_LABELS[col], fontsize=fs, fontweight="bold")
             ax.set_xticks([])
             ax.set_yticks([])
             for spine in ax.spines.values():
@@ -151,7 +149,7 @@ def visualize_6intent(height_map, slope_map, gen_paths, gt_paths, img_size,
         axes[row, 0].set_ylabel(row_label, fontsize=13, fontweight="bold",
                                 labelpad=10)
 
-    suptitle = "6-Intent Comparison"
+    suptitle = f"{n}-Intent Comparison"
     if terrain_note:
         suptitle += f"  ·  {terrain_note}"
     fig.suptitle(suptitle, fontsize=18, fontweight="bold", y=1.01)

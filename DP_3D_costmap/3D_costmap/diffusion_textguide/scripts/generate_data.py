@@ -60,6 +60,13 @@ INSTRUCTION_TEMPLATES = {
         "Veer right on your way to the goal",
         "Take the rightward path",
     ],
+    "center_bias": [
+        "Stay close to the baseline route",
+        "Follow the center-aligned path",
+        "Keep near the middle route",
+        "Do not drift too far from the baseline path",
+        "Take a path close to the standard route",
+    ],
     "avoid_steep": [
         "Avoid steep slopes",
         "Stay away from steep terrain",
@@ -72,26 +79,63 @@ INSTRUCTION_TEMPLATES = {
         "Prefer gentle slopes",
         "Stick to the flattest ground possible",
         "Choose the most level path available",
-        "Minimize elevation changes along the way",
+        "Stay on the smoothest terrain you can find",
     ],
-    "via_flat_region": [
-        "Pass through a flat midpoint region",
-        "Route through the gentle middle area",
-        "Go via a flat zone between start and goal",
-        "Detour through the level intermediate area",
-        "Cross through the flat region in between",
+    "minimize_elevation_change": [
+        "Minimize elevation changes along the way",
+        "Take a route with as little height change as possible",
+        "Avoid unnecessary ups and downs",
+        "Follow a path with minimal elevation variation",
+        "Keep the altitude changes as small as possible",
+    ],
+    "short_path": [
+        "Take the shortest route possible",
+        "Use the most direct path to the goal",
+        "Keep the route as short as you can",
+        "Choose the most direct way forward",
+        "Minimize the travel distance",
+    ],
+    "energy_efficient": [
+        "Choose the most energy-efficient route",
+        "Minimize traversal effort on the way to the goal",
+        "Follow a path that uses the least energy",
+        "Take the most efficient route in terms of effort",
+        "Reduce the energy cost as much as possible",
     ],
     "left_bias+avoid_steep": [
         "Stay left and avoid steep areas",
         "Keep to the left while bypassing steep slopes",
         "Veer left but steer clear of high gradients",
         "Follow the left side and route around steep terrain",
+        "Take a leftward path that avoids steep sections",
     ],
     "right_bias+prefer_flat": [
         "Stay right and follow flat terrain",
         "Keep to the right along gentle slopes",
         "Veer right while preferring level ground",
         "Take the rightward path on the flattest terrain",
+        "Follow the right side while staying on smooth ground",
+    ],
+    "center_bias+prefer_flat": [
+        "Stay near the baseline route and follow flat terrain",
+        "Keep close to the standard path while preferring gentle slopes",
+        "Take a center-aligned route over level ground",
+        "Follow the baseline direction on the flattest terrain",
+        "Stay near the middle route while keeping to smooth ground",
+    ],
+    "short_path+avoid_steep": [
+        "Take a short route while avoiding steep areas",
+        "Choose the most direct path that avoids steep slopes",
+        "Keep the path short but stay away from steep terrain",
+        "Find a compact route around steep sections",
+        "Minimize distance without crossing steep areas",
+    ],
+    "energy_efficient+minimize_elevation_change": [
+        "Choose an energy-efficient route with minimal elevation change",
+        "Minimize effort while avoiding unnecessary ups and downs",
+        "Take a low-energy path with as little height variation as possible",
+        "Follow the most efficient route while keeping elevation changes small",
+        "Reduce energy cost and keep the route as smooth in height as possible",
     ],
 }
 
@@ -115,14 +159,25 @@ def _sample_instruction(intent_type):
 # ============================================================================
 
 INTENT_CATALOG = [
-    {"type": "baseline",               "params": {}},
-    {"type": "left_bias",              "params": {"lambda_side": 5.0}},
-    {"type": "right_bias",             "params": {"lambda_side": 5.0}},
-    {"type": "avoid_steep",            "params": {"lambda_steep": 5.0, "tau_steep": 20.0}},
-    {"type": "prefer_flat",            "params": {"lambda_flat": 1.0}},
-    {"type": "via_flat_region",        "params": {"slope_threshold": 12.0, "search_fraction": 0.3}},
-    {"type": "left_bias+avoid_steep",  "params": {"lambda_side": 5.0, "lambda_steep": 5.0, "tau_steep": 20.0}},
-    {"type": "right_bias+prefer_flat", "params": {"lambda_side": 5.0, "lambda_flat": 1.0}},
+    {"type": "baseline",                             "params": {}},
+    {"type": "left_bias",                            "params": {"lambda_side": 5.0}},
+    {"type": "right_bias",                           "params": {"lambda_side": 5.0}},
+    {"type": "center_bias",                          "params": {"lambda_center": 5.0}},
+    {"type": "avoid_steep",                          "params": {"lambda_steep": 5.0, "tau_steep": 20.0}},
+    {"type": "prefer_flat",                          "params": {"lambda_flat": 1.0}},
+    {"type": "minimize_elevation_change",           "params": {"lambda_elev": 0.08}},
+    {"type": "short_path",                           "params": {"lambda_detour": 4.0}},
+    {"type": "energy_efficient",                    "params": {"lambda_energy": 0.12}},
+    {"type": "left_bias+avoid_steep",               "params": {
+        "lambda_side": 5.0, "lambda_steep": 5.0, "tau_steep": 20.0}},
+    {"type": "right_bias+prefer_flat",               "params": {
+        "lambda_side": 5.0, "lambda_flat": 1.0}},
+    {"type": "center_bias+prefer_flat",              "params": {
+        "lambda_center": 5.0, "lambda_flat": 1.0}},
+    {"type": "short_path+avoid_steep",               "params": {
+        "lambda_detour": 4.0, "lambda_steep": 5.0, "tau_steep": 20.0}},
+    {"type": "energy_efficient+minimize_elevation_change", "params": {
+        "lambda_energy": 0.12, "lambda_elev": 0.08}},
 ]
 
 
@@ -171,7 +226,7 @@ def _precompute_side_bias(start, goal, img_size):
       visual forward = (dc, dr),  visual left = (-dr, dc)
       → (row,col) 형식: left_r = dc/norm, left_c = -dr/norm
 
-    반환: (left_r, left_c, half_range, start) 또는 None (start==goal).
+    반환: dict(side reference) 또는 None (start==goal).
     """
     dr = goal[0] - start[0]
     dc = goal[1] - start[1]
@@ -181,7 +236,35 @@ def _precompute_side_bias(start, goal, img_size):
     left_r = dc / norm
     left_c = -dr / norm
     half_range = img_size / 2.0
-    return (left_r, left_c, half_range, start)
+    return {
+        "left_r": left_r,
+        "left_c": left_c,
+        "half_range": half_range,
+        "ref_start": start,
+    }
+
+
+def _signed_offset_from_baseline(node_j, baseline_points):
+    """Return signed lateral offset (pixels) from nearest baseline segment.
+
+    Positive means left of local baseline tangent in (row, col) coordinates.
+    """
+    if baseline_points is None or len(baseline_points) < 2:
+        return 0.0
+    p = np.array(node_j, dtype=np.float32)
+    pts = np.asarray(baseline_points, dtype=np.float32)
+    d2 = np.sum((pts - p) ** 2, axis=1)
+    k = int(np.argmin(d2))
+    i0 = max(0, k - 1)
+    i1 = min(len(pts) - 1, k + 1)
+    t = pts[i1] - pts[i0]  # local tangent in (row, col)
+    norm = float(np.hypot(t[0], t[1]))
+    if norm < 1e-6:
+        return 0.0
+    left_r = t[1] / norm
+    left_c = -t[0] / norm
+    rel = p - pts[k]
+    return float(rel[0] * left_r + rel[1] * left_c)
 
 
 def _calculate_intent_penalty(intent_type, intent_params, node_j, img_size,
@@ -213,8 +296,15 @@ def _single_intent_penalty(intent_type, params, node_j, img_size,
     if intent_type in ("left_bias", "right_bias"):
         if side_info is None:
             return 0.0
-        left_r, left_c, half_range, ref_start = side_info
-        proj = (r - ref_start[0]) * left_r + (c - ref_start[1]) * left_c
+        if isinstance(side_info, dict) and side_info.get("baseline_points") is not None:
+            proj = _signed_offset_from_baseline((r, c), side_info.get("baseline_points"))
+            half_range = float(side_info.get("half_range", img_size / 2.0))
+        else:
+            left_r = side_info["left_r"] if isinstance(side_info, dict) else side_info[0]
+            left_c = side_info["left_c"] if isinstance(side_info, dict) else side_info[1]
+            half_range = side_info["half_range"] if isinstance(side_info, dict) else side_info[2]
+            ref_start = side_info["ref_start"] if isinstance(side_info, dict) else side_info[3]
+            proj = (r - ref_start[0]) * left_r + (c - ref_start[1]) * left_c
         u_perp = np.clip(0.5 - proj / (2.0 * half_range), 0.0, 1.0)
         lam = params.get("lambda_side", 3.0)
         if intent_type == "left_bias":
@@ -231,47 +321,50 @@ def _single_intent_penalty(intent_type, params, node_j, img_size,
         slope_deg_j = np.degrees(slope_map_rad[r, c])
         return params.get("lambda_flat", 1.0) * slope_deg_j
 
+    if intent_type == "center_bias":
+        if side_info is None:
+            return 0.0
+        if isinstance(side_info, dict) and side_info.get("baseline_points") is not None:
+            proj = _signed_offset_from_baseline((r, c), side_info.get("baseline_points"))
+            half_range = float(side_info.get("half_range", img_size / 2.0))
+        else:
+            left_r = side_info["left_r"] if isinstance(side_info, dict) else side_info[0]
+            left_c = side_info["left_c"] if isinstance(side_info, dict) else side_info[1]
+            half_range = side_info["half_range"] if isinstance(side_info, dict) else side_info[2]
+            ref_start = side_info["ref_start"] if isinstance(side_info, dict) else side_info[3]
+            proj = (r - ref_start[0]) * left_r + (c - ref_start[1]) * left_c
+        u = proj / max(2.0 * half_range, 1e-6)
+        lam = params.get("lambda_center", 5.0)
+        return lam * abs(u)
+
+    if intent_type == "minimize_elevation_change":
+        slope_deg_j = np.degrees(slope_map_rad[r, c])
+        lam = params.get("lambda_elev", 0.08)
+        return lam * (slope_deg_j ** 2) / 100.0
+
+    if intent_type == "short_path":
+        if side_info is None:
+            return 0.0
+        if isinstance(side_info, dict) and side_info.get("baseline_points") is not None:
+            proj = _signed_offset_from_baseline((r, c), side_info.get("baseline_points"))
+            half_range = float(side_info.get("half_range", img_size / 2.0))
+        else:
+            left_r = side_info["left_r"] if isinstance(side_info, dict) else side_info[0]
+            left_c = side_info["left_c"] if isinstance(side_info, dict) else side_info[1]
+            half_range = side_info["half_range"] if isinstance(side_info, dict) else side_info[2]
+            ref_start = side_info["ref_start"] if isinstance(side_info, dict) else side_info[3]
+            proj = (r - ref_start[0]) * left_r + (c - ref_start[1]) * left_c
+        u = abs(proj) / max(2.0 * half_range, 1e-6)
+        lam = params.get("lambda_detour", 4.0)
+        return lam * (u ** 2)
+
+    if intent_type == "energy_efficient":
+        slope_deg_j = np.degrees(slope_map_rad[r, c])
+        cot = _calculate_paper_cot(slope_deg_j)
+        lam = params.get("lambda_energy", 0.12)
+        return lam * max(cot, 0.0)
+
     return 0.0
-
-
-# ============================================================================
-# Via-point 자동 선택
-# ============================================================================
-
-def _find_via_point(slope_map_rad, start, goal, img_size,
-                    slope_threshold_deg=12.0, search_fraction=0.3):
-    """via_flat_region용 via-point 자동 선택.
-
-    조건:
-      - slope < threshold
-      - start-goal 중간 영역에 위치
-      - 등반 불가 구역이 아닐 것
-    """
-    mid_r = (start[0] + goal[0]) / 2.0
-    mid_c = (start[1] + goal[1]) / 2.0
-    dist = np.hypot(goal[0] - start[0], goal[1] - start[1])
-    search_radius = max(5, int(dist * search_fraction))
-
-    r_lo = max(0, int(mid_r - search_radius))
-    r_hi = min(img_size, int(mid_r + search_radius + 1))
-    c_lo = max(0, int(mid_c - search_radius))
-    c_hi = min(img_size, int(mid_c + search_radius + 1))
-
-    slope_threshold_rad = np.radians(slope_threshold_deg)
-    sub_slope = slope_map_rad[r_lo:r_hi, c_lo:c_hi]
-    candidates = np.argwhere(sub_slope < slope_threshold_rad)
-
-    if len(candidates) == 0:
-        candidates = np.argwhere(sub_slope < slope_threshold_rad * 1.5)
-        if len(candidates) == 0:
-            return None
-
-    local_mid_r = mid_r - r_lo
-    local_mid_c = mid_c - c_lo
-    dists = np.hypot(candidates[:, 0] - local_mid_r, candidates[:, 1] - local_mid_c)
-    best_idx = np.argmin(dists)
-    best = candidates[best_idx]
-    return (r_lo + int(best[0]), c_lo + int(best[1]))
 
 
 # ============================================================================
@@ -283,7 +376,8 @@ def _a_star_intent_search(slope_map, height_map, start, goal,
                           pixel_resolution=0.5,
                           alpha=1.0, beta=0.8, gamma=0.1, delta=1.0,
                           risk_threshold_deg=15.0,
-                          intent_type="baseline", intent_params=None):
+                          intent_type="baseline", intent_params=None,
+                          side_info=None):
     """4-term cost A*.
 
     c_{ij} = α·d_{ij} + β·CoT_{ij}·d_{ij} + γ·Risk_{ij} + δ·IntentPenalty_{ij}
@@ -298,7 +392,8 @@ def _a_star_intent_search(slope_map, height_map, start, goal,
     if slope_map[start] >= limit_angle_rad or slope_map[goal] >= limit_angle_rad:
         return None
 
-    side_info = _precompute_side_bias(start, goal, rows)
+    if side_info is None:
+        side_info = _precompute_side_bias(start, goal, rows)
 
     map_size = rows * cols
     if max_iterations < map_size * 10:
@@ -372,45 +467,6 @@ def _a_star_intent_search(slope_map, height_map, start, goal,
     return None
 
 
-def _two_stage_a_star(slope_map, height_map, start, goal,
-                      limit_angle_rad, max_iterations,
-                      pixel_resolution, alpha, beta, gamma, delta,
-                      risk_threshold_deg, intent_params):
-    """via_flat_region용 2단계 A*.
-
-    1. via-point 자동 선택
-    2. start → via, via → goal 각각 baseline A*
-    3. 경로 연결
-    """
-    img_size = height_map.shape[0]
-    slope_th = intent_params.get("slope_threshold", 12.0)
-    search_frac = intent_params.get("search_fraction", 0.3)
-
-    via = _find_via_point(slope_map, start, goal, img_size, slope_th, search_frac)
-    if via is None:
-        return None, None
-
-    path1 = _a_star_intent_search(
-        slope_map, height_map, start, via,
-        limit_angle_rad, max_iterations, pixel_resolution,
-        alpha, beta, gamma, 0.0, risk_threshold_deg,
-        "baseline", {}
-    )
-    if path1 is None:
-        return None, None
-
-    path2 = _a_star_intent_search(
-        slope_map, height_map, via, goal,
-        limit_angle_rad, max_iterations, pixel_resolution,
-        alpha, beta, gamma, 0.0, risk_threshold_deg,
-        "baseline", {}
-    )
-    if path2 is None:
-        return None, None
-
-    return path1 + path2[1:], via
-
-
 # ============================================================================
 # Path utilities
 # ============================================================================
@@ -481,18 +537,29 @@ class SlopeCotGenerator:
                               alpha=1.0, beta=0.8, gamma=0.1, delta=1.0,
                               risk_threshold_deg=15.0,
                               intent_type="baseline", intent_params=None):
-        """intent 기반 경로 탐색. via_flat_region이면 2단계 A* 사용."""
+        """intent 기반 경로 탐색."""
         if self.height_map is None or self.slope_map is None:
             raise RuntimeError("generate()를 먼저 호출하세요.")
 
-        if intent_type == "via_flat_region":
-            path, via = _two_stage_a_star(
+        side_info = _precompute_side_bias(start, goal, self.img_size)
+        intent_parts = set(intent_type.split("+"))
+        uses_lateral = bool(intent_parts & {"left_bias", "right_bias", "center_bias", "short_path"})
+        # For lateral intents, anchor left/right/center to the baseline route
+        # rather than a single straight start->goal line.
+        if uses_lateral and intent_type != "baseline":
+            baseline_path = _a_star_intent_search(
                 self.slope_map, self.height_map, start, goal,
                 self.limit_angle, self.max_iterations,
-                self.pixel_resolution, alpha, beta, gamma, delta,
-                risk_threshold_deg, intent_params or {}
+                pixel_resolution=self.pixel_resolution,
+                alpha=alpha, beta=beta, gamma=gamma, delta=0.0,
+                risk_threshold_deg=risk_threshold_deg,
+                intent_type="baseline",
+                intent_params={},
+                side_info=side_info,
             )
-            return path
+            if baseline_path is not None and len(baseline_path) >= 2 and side_info is not None:
+                side_info = dict(side_info)
+                side_info["baseline_points"] = np.array(baseline_path, dtype=np.float32)
 
         return _a_star_intent_search(
             self.slope_map, self.height_map, start, goal,
@@ -501,7 +568,8 @@ class SlopeCotGenerator:
             alpha=alpha, beta=beta, gamma=gamma, delta=delta,
             risk_threshold_deg=risk_threshold_deg,
             intent_type=intent_type,
-            intent_params=intent_params or {}
+            intent_params=intent_params or {},
+            side_info=side_info,
         )
 
 

@@ -10,10 +10,11 @@ Metric catalogue
  ──────────        ──────                  ────────
  Goal quality       goal_error              goal_error()
                     feasibility             infeasible_rate()
- Instruction        ISR (overall)           instruction_success_rate()
-                    side_bias_success       side_bias_success()
-                    via_success             via_success()
-                    avoid_steep_success     avoid_steep_success()
+ Instruction        ISR score [0,1]         instruction_success() (atomic scores +
+                                                          geometric mean for +)
+                    ISR mean                instruction_success_rate()
+                    side_bias_success       side_bias_success() (legacy bool)
+                    avoid_steep_success     avoid_steep_success() (legacy bool)
  Energy / safety    cumulative_cot          cumulative_cot()
                     mean_slope              mean_slope_along_path()
                     max_slope               max_slope_along_path()
@@ -121,6 +122,79 @@ def _path_centroid_offset(
     return float(np.dot(centroid - start_norm, norm_perp))
 
 
+def _ref_polyline_lateral(
+    baseline_path_norm: Optional[np.ndarray],
+    start_norm: np.ndarray,
+    goal_norm: np.ndarray,
+) -> np.ndarray:
+    """Baseline route τ^base in normalised space; chord start→goal if unknown."""
+    if baseline_path_norm is not None and len(baseline_path_norm) >= 2:
+        return np.asarray(baseline_path_norm, dtype=np.float32)
+    return np.stack(
+        [np.asarray(start_norm, dtype=np.float32), np.asarray(goal_norm, dtype=np.float32)],
+        axis=0,
+    )
+
+
+def lateral_deltas_vs_reference(
+    path_norm: np.ndarray,
+    ref_path_norm: np.ndarray,
+) -> np.ndarray:
+    """Per-step Δ_t: signed lateral offset of each waypoint w.r.t. reference polyline.
+
+    Positive = left of local reference tangent in normalised (x, y) space
+    (matches centroid / A* side_bias convention in this codebase).
+    """
+    path_norm = np.asarray(path_norm, dtype=np.float32)
+    ref = np.asarray(ref_path_norm, dtype=np.float32)
+    t_n = len(path_norm)
+    deltas = np.zeros(t_n, dtype=np.float32)
+    if len(ref) < 2:
+        return deltas
+    for t in range(t_n):
+        p = path_norm[t]
+        d2 = np.sum((ref - p) ** 2, axis=1)
+        k = int(np.argmin(d2))
+        i0 = max(0, k - 1)
+        i1 = min(len(ref) - 1, k + 1)
+        tang = ref[i1] - ref[i0]
+        n = float(np.linalg.norm(tang))
+        if n < 1e-8:
+            continue
+        left = np.array([-tang[1], tang[0]], dtype=np.float32) / n
+        deltas[t] = float(np.dot(p - ref[k], left))
+    return deltas
+
+
+def _tilde_linear(x: float, scale: float) -> float:
+    """Normalise raw x ≥ 0 into [0, 1] via x / scale (clipped)."""
+    return float(min(max(x, 0.0) / max(scale, 1e-8), 1.0))
+
+
+def _path_centroid_offset_from_reference(
+    path_norm: np.ndarray,
+    ref_path_norm: np.ndarray,
+) -> float:
+    """Signed lateral offset of path centroid w.r.t. local tangent of ref path.
+
+    Positive means left of reference tangent in the same normalized (x,y) space.
+    """
+    if ref_path_norm is None or len(ref_path_norm) < 2:
+        return 0.0
+    centroid = np.asarray(path_norm, dtype=np.float32).mean(axis=0)
+    ref = np.asarray(ref_path_norm, dtype=np.float32)
+    d2 = np.sum((ref - centroid) ** 2, axis=1)
+    k = int(np.argmin(d2))
+    i0 = max(0, k - 1)
+    i1 = min(len(ref) - 1, k + 1)
+    t = ref[i1] - ref[i0]
+    n = float(np.linalg.norm(t))
+    if n < 1e-8:
+        return 0.0
+    left = np.array([-t[1], t[0]], dtype=np.float32) / n
+    return float(np.dot(centroid - ref[k], left))
+
+
 def side_bias_success(
     path_norm: np.ndarray,
     start_norm: np.ndarray,
@@ -136,30 +210,6 @@ def side_bias_success(
     if bias == "left":
         return offset > threshold
     return offset < -threshold
-
-
-def via_success(
-    path_norm: np.ndarray,
-    slope_map_deg: np.ndarray,
-    img_size: int,
-    start_pos: tuple,
-    goal_pos: tuple,
-    slope_threshold_deg: float = 12.0,
-    proximity_frac: float = 0.25,
-) -> bool:
-    """Check if path passes through a flat midpoint region."""
-    mid_r = (start_pos[0] + goal_pos[0]) / 2.0
-    mid_c = (start_pos[1] + goal_pos[1]) / 2.0
-    dist = np.hypot(goal_pos[0] - start_pos[0], goal_pos[1] - start_pos[1])
-    radius = max(5, dist * proximity_frac)
-
-    path_px = _norm_to_px(path_norm, img_size)
-    for pt in path_px:
-        r, c = int(np.clip(pt[0], 0, img_size - 1)), int(np.clip(pt[1], 0, img_size - 1))
-        if np.hypot(r - mid_r, c - mid_c) <= radius:
-            if slope_map_deg[r, c] < slope_threshold_deg:
-                return True
-    return False
 
 
 def avoid_steep_success(
@@ -179,6 +229,79 @@ def avoid_steep_success(
     return frac_steep <= tolerance_frac
 
 
+def _atomic_instruction_score(
+    part: str,
+    path_norm: np.ndarray,
+    intent_params: dict,
+    slope_map_deg: np.ndarray,
+    img_size: int,
+    start_pos: tuple,
+    goal_pos: tuple,
+    start_norm: np.ndarray,
+    goal_norm: np.ndarray,
+    baseline_path_norm: Optional[np.ndarray],
+    height_map: Optional[np.ndarray],
+    pixel_resolution: float,
+    limit_angle_deg: float,
+) -> float:
+    """Single intent component score in [0, 1] (paper ISR definitions)."""
+    ref = _ref_polyline_lateral(baseline_path_norm, start_norm, goal_norm)
+
+    if part == "left_bias":
+        m = float(intent_params.get("lateral_margin", 0.02))
+        d = lateral_deltas_vs_reference(path_norm, ref)
+        return float(np.clip(np.mean(d > m), 0.0, 1.0))
+
+    if part == "right_bias":
+        m = float(intent_params.get("lateral_margin", 0.02))
+        d = lateral_deltas_vs_reference(path_norm, ref)
+        return float(np.clip(np.mean(d < -m), 0.0, 1.0))
+
+    if part == "center_bias":
+        scale = float(intent_params.get("isr_center_delta_scale", 0.25))
+        d = lateral_deltas_vs_reference(path_norm, ref)
+        mean_abs = float(np.mean(np.abs(d)))
+        return float(np.clip(1.0 - _tilde_linear(mean_abs, scale), 0.0, 1.0))
+
+    if part == "avoid_steep":
+        tau = float(intent_params.get("tau_steep", 20.0))
+        rc = _px_int(_norm_to_px(path_norm, img_size), img_size)
+        slopes = slope_map_deg[rc[:, 0], rc[:, 1]]
+        frac = float(np.mean(slopes > tau))
+        return float(np.clip(1.0 - frac, 0.0, 1.0))
+
+    if part == "prefer_flat":
+        scale_deg = float(intent_params.get("isr_flat_slope_scale_deg", 45.0))
+        rc = _px_int(_norm_to_px(path_norm, img_size), img_size)
+        mean_s = float(np.mean(slope_map_deg[rc[:, 0], rc[:, 1]]))
+        return float(np.clip(1.0 - _tilde_linear(mean_s, scale_deg), 0.0, 1.0))
+
+    if part == "minimize_elevation_change":
+        if height_map is None:
+            return 0.0
+        scale_v = float(intent_params.get("isr_elev_change_scale", 80.0))
+        rc = _px_int(_norm_to_px(path_norm, img_size), img_size)
+        h = height_map[rc[:, 0], rc[:, 1]].astype(np.float64)
+        v = float(np.sum(np.abs(np.diff(h))))
+        return float(np.clip(1.0 - _tilde_linear(v, scale_v), 0.0, 1.0))
+
+    if part == "short_path":
+        scale_f = float(intent_params.get("isr_short_len_scale_factor", 2.5))
+        L = path_length(path_norm)
+        chord = float(np.linalg.norm(goal_norm - start_norm))
+        l_max = max(scale_f * max(chord, 1e-6), 1e-6)
+        return float(np.clip(1.0 - _tilde_linear(L, l_max), 0.0, 1.0))
+
+    if part == "energy_efficient":
+        if height_map is None:
+            return 0.0
+        scale_cot = float(intent_params.get("isr_cot_scale", 800.0))
+        cot = cumulative_cot(path_norm, height_map, img_size, pixel_resolution, limit_angle_deg)
+        return float(np.clip(1.0 - _tilde_linear(cot, scale_cot), 0.0, 1.0))
+
+    return 1.0
+
+
 def instruction_success(
     path_norm: np.ndarray,
     intent_type: str,
@@ -189,8 +312,12 @@ def instruction_success(
     goal_pos: tuple,
     start_norm: Optional[np.ndarray] = None,
     goal_norm: Optional[np.ndarray] = None,
-) -> bool:
-    """Dispatch ISR check for a single sample based on intent_type."""
+    baseline_path_norm: Optional[np.ndarray] = None,
+    height_map: Optional[np.ndarray] = None,
+    pixel_resolution: float = 0.5,
+    limit_angle_deg: float = 35.0,
+) -> float:
+    """ISR adherence score in [0, 1] for intent_type (composite = geometric mean)."""
     if start_norm is None:
         start_norm = np.array([(start_pos[1] / img_size) * 2 - 1,
                                (start_pos[0] / img_size) * 2 - 1], dtype=np.float32)
@@ -198,33 +325,26 @@ def instruction_success(
         goal_norm = np.array([(goal_pos[1] / img_size) * 2 - 1,
                               (goal_pos[0] / img_size) * 2 - 1], dtype=np.float32)
 
-    parts = intent_type.split("+")
+    parts = [p for p in intent_type.split("+") if p and p != "baseline"]
+    if not parts:
+        return 1.0
+
+    scores = []
     for part in parts:
-        if part == "baseline":
-            continue
-        elif part == "left_bias":
-            if not side_bias_success(path_norm, start_norm, goal_norm, "left"):
-                return False
-        elif part == "right_bias":
-            if not side_bias_success(path_norm, start_norm, goal_norm, "right"):
-                return False
-        elif part == "avoid_steep":
-            tau = intent_params.get("tau_steep", 20.0)
-            if not avoid_steep_success(path_norm, slope_map_deg, img_size, tau):
-                return False
-        elif part == "prefer_flat":
-            if not avoid_steep_success(path_norm, slope_map_deg, img_size, 25.0, 0.10):
-                return False
-        elif part == "via_flat_region":
-            slope_th = intent_params.get("slope_threshold", 12.0)
-            if not via_success(path_norm, slope_map_deg, img_size,
-                               start_pos, goal_pos, slope_th):
-                return False
-    return True
+        scores.append(
+            _atomic_instruction_score(
+                part, path_norm, intent_params, slope_map_deg, img_size,
+                start_pos, goal_pos, start_norm, goal_norm, baseline_path_norm,
+                height_map, pixel_resolution, limit_angle_deg,
+            )
+        )
+    scores_arr = np.clip(np.array(scores, dtype=np.float64), 0.0, 1.0)
+    log_s = np.log(np.maximum(scores_arr, 1e-15))
+    return float(np.exp(np.mean(log_s)))
 
 
-def instruction_success_rate(results: list[bool]) -> float:
-    """ISR = mean of boolean success list."""
+def instruction_success_rate(results: list) -> float:
+    """Mean ISR score (each entry in [0, 1])."""
     return float(np.mean(results)) if results else 0.0
 
 
@@ -438,19 +558,25 @@ def instruction_adherence_gap(
     generated and reference path."""
     gap = {}
     parts = intent_type.split("+")
+    s_norm = np.array([(start_pos[1] / img_size) * 2 - 1,
+                       (start_pos[0] / img_size) * 2 - 1])
+    g_norm = np.array([(goal_pos[1] / img_size) * 2 - 1,
+                       (goal_pos[0] / img_size) * 2 - 1])
     for part in parts:
         if part in ("left_bias", "right_bias"):
-            s_norm = np.array([(start_pos[1] / img_size) * 2 - 1,
-                               (start_pos[0] / img_size) * 2 - 1])
-            g_norm = np.array([(goal_pos[1] / img_size) * 2 - 1,
-                               (goal_pos[0] / img_size) * 2 - 1])
             off_gen = _path_centroid_offset(path_norm, s_norm, g_norm)
             off_ref = _path_centroid_offset(ref_path_norm, s_norm, g_norm)
             gap[f"{part}_offset_gap"] = off_gen - off_ref
-        elif part in ("avoid_steep", "prefer_flat"):
+        elif part in ("avoid_steep", "prefer_flat", "minimize_elevation_change", "energy_efficient"):
             ms_gen = mean_slope_along_path(path_norm, slope_map_deg, img_size)
             ms_ref = mean_slope_along_path(ref_path_norm, slope_map_deg, img_size)
             gap[f"{part}_mean_slope_gap"] = ms_gen - ms_ref
+        elif part == "center_bias":
+            off_gen = abs(_path_centroid_offset(path_norm, s_norm, g_norm))
+            off_ref = abs(_path_centroid_offset(ref_path_norm, s_norm, g_norm))
+            gap["center_bias_abs_offset_gap"] = off_gen - off_ref
+        elif part == "short_path":
+            gap["short_path_len_gap"] = path_length(path_norm) - path_length(ref_path_norm)
     return gap
 
 
@@ -498,6 +624,9 @@ def compute_all_metrics(
         path_norm, intent_type, intent_params,
         slope_map_deg, img_size, start_pos or (0, 0), goal_pos or (0, 0),
         start_norm, goal_norm_v,
+        height_map=height_map,
+        pixel_resolution=pixel_resolution,
+        limit_angle_deg=limit_angle_deg,
     ))
 
     # energy / safety

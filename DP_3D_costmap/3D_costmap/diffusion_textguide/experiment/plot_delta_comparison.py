@@ -19,6 +19,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from pathlib import Path
 
+import sys
+_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_ROOT))
+from scripts.generate_data import INTENT_CATALOG
+
 
 def load_sweep(path):
     with open(path) as f:
@@ -33,10 +38,8 @@ def get_row(results, a, b, g, d, intent):
     return None
 
 
-INTENTS = ["baseline", "left_bias", "right_bias",
-           "avoid_steep", "prefer_flat", "via_flat_region"]
-INTENT_LABELS = ["Baseline", "Left bias", "Right bias",
-                 "Avoid steep", "Prefer flat", "Via flat"]
+INTENTS = [e["type"] for e in INTENT_CATALOG]
+INTENT_LABELS = [t.replace("_", " ").replace("+", " + ").title() for t in INTENTS]
 
 
 def make_figures(results, out_dir,

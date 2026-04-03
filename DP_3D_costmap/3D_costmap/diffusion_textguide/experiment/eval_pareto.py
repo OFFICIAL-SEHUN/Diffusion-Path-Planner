@@ -74,8 +74,22 @@ DEFAULT_CONFIG = {
         "gamma": [0.0, 0.1, 0.5, 1.0],
         "delta": [0.0, 0.5, 1.0, 2.0],
     },
-    "intents": ["baseline", "left_bias", "right_bias", "avoid_steep",
-                "prefer_flat", "via_flat_region"],
+    "intents": [
+        "baseline",
+        "left_bias",
+        "right_bias",
+        "center_bias",
+        "avoid_steep",
+        "prefer_flat",
+        "minimize_elevation_change",
+        "short_path",
+        "energy_efficient",
+        "left_bias+avoid_steep",
+        "right_bias+prefer_flat",
+        "center_bias+prefer_flat",
+        "short_path+avoid_steep",
+        "energy_efficient+minimize_elevation_change",
+    ],
     "horizon": 120,
     "risk_threshold_deg": 15.0,
     "seed": 42,
@@ -182,6 +196,15 @@ def run_sweep(cfg: dict):
                     intent_type=intent_name,
                     intent_params=iparams,
                 )
+                baseline_px = None
+                if any(k in intent_name for k in ("center_bias", "left_bias", "right_bias")):
+                    baseline_px = gen.find_path_with_intent(
+                        ter["start"], ter["goal"],
+                        alpha=a, beta=b, gamma=g, delta=0.0,
+                        risk_threshold_deg=risk_th,
+                        intent_type="baseline",
+                        intent_params={},
+                    )
                 row["n_total"] += 1
                 if path_px is None or len(path_px) < 5:
                     continue
@@ -189,6 +212,10 @@ def run_sweep(cfg: dict):
 
                 norm = _path_pixels_to_normalized(path_px, img_size)
                 fixed = _resample_path(norm, horizon)
+                baseline_fixed = None
+                if baseline_px is not None and len(baseline_px) >= 5:
+                    bnorm = _path_pixels_to_normalized(baseline_px, img_size)
+                    baseline_fixed = _resample_path(bnorm, horizon)
 
                 row["cot_list"].append(
                     cumulative_cot(fixed, ter["height_map"], img_size, px_res, limit_deg))
@@ -204,6 +231,10 @@ def run_sweep(cfg: dict):
                     fixed, intent_name, iparams,
                     ter["slope_map_deg"], img_size,
                     ter["start"], ter["goal"],
+                    baseline_path_norm=baseline_fixed,
+                    height_map=ter["height_map"],
+                    pixel_resolution=px_res,
+                    limit_angle_deg=limit_deg,
                 )))
 
             for key in ("cot_list", "risk_list", "mean_slope_list",

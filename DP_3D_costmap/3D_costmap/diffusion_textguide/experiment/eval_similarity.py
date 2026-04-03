@@ -11,7 +11,6 @@ Metrics (all require normalisation / same-horizon alignment):
   - Edge cost gap (same 4-term formula)
   - Instruction adherence gap (per-intent sub-metric delta)
   - Side-bias score gap
-  - Via-success agreement
   - Avoid-steep agreement
 
 Usage:
@@ -58,7 +57,6 @@ from experiment.metrics import (
     instruction_adherence_gap,
     instruction_success,
     side_bias_success,
-    via_success,
     avoid_steep_success,
     cumulative_cot,
     mean_slope_along_path,
@@ -195,9 +193,17 @@ def _evaluate_split(
         s_np = s_norm.numpy()
         g_np = g_norm.numpy()
         row["gen_isr"] = float(instruction_success(
-            gen, itype, iparams, slope_deg, img_size, start, goal, s_np, g_np))
+            gen, itype, iparams, slope_deg, img_size, start, goal, s_np, g_np,
+            height_map=height_map,
+            pixel_resolution=px_res,
+            limit_angle_deg=limit_deg,
+        ))
         row["ref_isr"] = float(instruction_success(
-            ref_path, itype, iparams, slope_deg, img_size, start, goal, s_np, g_np))
+            ref_path, itype, iparams, slope_deg, img_size, start, goal, s_np, g_np,
+            height_map=height_map,
+            pixel_resolution=px_res,
+            limit_angle_deg=limit_deg,
+        ))
 
         parts = itype.split("+")
         for part in parts:
@@ -215,13 +221,6 @@ def _evaluate_split(
                 row["avoid_steep_gen"] = float(gen_ok)
                 row["avoid_steep_ref"] = float(ref_ok)
                 row["avoid_steep_agreement"] = float(gen_ok == ref_ok)
-            elif part == "via_flat_region":
-                slope_th = iparams.get("slope_threshold", 12.0)
-                gen_ok = via_success(gen, slope_deg, img_size, start, goal, slope_th)
-                ref_ok = via_success(ref_path, slope_deg, img_size, start, goal, slope_th)
-                row["via_gen"] = float(gen_ok)
-                row["via_ref"] = float(ref_ok)
-                row["via_agreement"] = float(gen_ok == ref_ok)
 
         adh_gap = instruction_adherence_gap(
             gen, ref_path, slope_deg, img_size, itype, iparams, start, goal)
@@ -247,11 +246,17 @@ def _intent_display_name(intent: str) -> str:
         "baseline": "Base",
         "left_bias": "Left",
         "right_bias": "Right",
+        "center_bias": "Center",
         "avoid_steep": "Avoid",
         "prefer_flat": "Flat",
-        "via_flat_region": "Via",
+        "minimize_elevation_change": "ΔElev",
+        "short_path": "Short",
+        "energy_efficient": "Energy",
         "left_bias+avoid_steep": "Left+Steep",
         "right_bias+prefer_flat": "Right+Flat",
+        "center_bias+prefer_flat": "Ctr+Flat",
+        "short_path+avoid_steep": "Short+Steep",
+        "energy_efficient+minimize_elevation_change": "En+ΔEl",
     }
     return labels.get(intent, intent.replace("_", " "))
 

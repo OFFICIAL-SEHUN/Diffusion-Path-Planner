@@ -3,11 +3,13 @@ Text-conditioned Diffusion Path Planner — Training Script
 
 Usage:
   python train.py --config configs/default_config.yaml --data-dir data/raw
+python train.py --config configs/convnext_tiny.yaml --data-dir data/raw    --resume checkpoints/convnext_tiny_pretrained/epoch_16000.pt
 """
 
 import os
 import sys
 import argparse
+from typing import Optional
 import yaml
 import numpy as np
 import torch
@@ -44,6 +46,9 @@ def save_checkpoint(model, optimizer, epoch, vocab, config, path, scaler=None):
     }
     if scaler is not None:
         payload["scaler_state_dict"] = scaler.state_dict()
+    parent = os.path.dirname(os.path.abspath(path))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     torch.save(payload, path)
 
 
@@ -111,7 +116,12 @@ def visualize_sample(model, scheduler, dataset, epoch, device, out_dir):
     model.train()
 
 
-def train(config: dict, data_dir: str, device_str: str = "cuda"):
+def train(
+    config: dict,
+    data_dir: str,
+    device_str: str = "cuda",
+    resume_from: Optional[str] = None,
+):
     device = torch.device(device_str if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
@@ -171,6 +181,27 @@ def train(config: dict, data_dir: str, device_str: str = "cuda"):
     vis_dir = str(_ROOT / "results" / "train_vis")
     os.makedirs(ckpt_dir, exist_ok=True)
 
+    start_epoch = 1
+    global_step = 0
+    if resume_from:
+        ckpt_path = os.path.abspath(resume_from)
+        if not os.path.isfile(ckpt_path):
+            ckpt_path = str(_ROOT / resume_from)
+        if not os.path.isfile(ckpt_path):
+            raise FileNotFoundError(f"--resume checkpoint not found: {resume_from}")
+        ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+        model.load_state_dict(ckpt["model_state_dict"])
+        optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+        if use_amp and ckpt.get("scaler_state_dict") is not None:
+            scaler.load_state_dict(ckpt["scaler_state_dict"])
+        done = int(ckpt.get("epoch", 0))
+        start_epoch = done + 1
+        global_step = max(0, (start_epoch - 1) * len(loader))
+        sv = ckpt.get("vocab")
+        if sv is not None and sv != vocab:
+            print("Warning: checkpoint vocab differs from build_vocab(); using checkpoint is OK if keys match.")
+        print(f"Resumed from {ckpt_path} (completed epoch {done}, next epoch {start_epoch})")
+
     # --- WandB (optional) ---
     use_wandb = False
     try:
@@ -192,8 +223,11 @@ def train(config: dict, data_dir: str, device_str: str = "cuda"):
     print(f"Dataset: {len(dataset)} samples, vocab_size={dataset.vocab_size}")
     print("=" * 60)
 
-    global_step = 0
-    for epoch in range(1, epochs + 1):
+    if start_epoch > epochs:
+        print(f"Nothing to do: start_epoch {start_epoch} > training.epochs {epochs}")
+        return
+
+    for epoch in range(start_epoch, epochs + 1):
         model.train()
         epoch_loss = 0.0
         n_batches = 0
@@ -278,6 +312,12 @@ def main():
     ap.add_argument("--device", type=str, default="cuda")
     ap.add_argument("--epochs", type=int, default=None)
     ap.add_argument("--batch-size", type=int, default=None)
+    ap.add_argument(
+        "--resume",
+        type=str,
+        default=None,
+        help="Path to epoch_*.pt to resume (loads model/optimizer/scaler, continues from next epoch)",
+    )
     args = ap.parse_args()
 
     cfg_path = args.config
@@ -293,7 +333,7 @@ def main():
 
     data_dir = args.data_dir or str(_ROOT / "data" / "raw")
 
-    train(config, data_dir, device_str=args.device)
+    train(config, data_dir, device_str=args.device, resume_from=args.resume)
 
 
 if __name__ == "__main__":

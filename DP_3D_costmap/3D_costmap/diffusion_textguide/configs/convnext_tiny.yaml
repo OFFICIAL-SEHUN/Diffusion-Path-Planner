@@ -45,7 +45,7 @@ diffusion:
 
 # --- timm visual backbone ---
 model:
-  base_dim: 128
+  base_dim: 64
   time_embed_dim: 256
   image_feat_dim: 256
   visual_backbone: convnext
@@ -53,10 +53,10 @@ model:
   timm_pretrained: true
 
 training:
-  epochs: 10000
-  batch_size: 64
+  epochs: 20000
+  batch_size: 128
   learning_rate: 0.00003
-  checkpoint_dir: "checkpoints/convnext_tiny"
+  checkpoint_dir: "checkpoints/convnext_tiny_pretrained"
   model_name: "diffusion_textguide_convnext_tiny.pt"
   log_interval: 1000       # checkpoint + train_vis more often than 10k
   use_amp: true

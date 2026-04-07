@@ -164,27 +164,51 @@ def visualize_one(
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Visualize terrain + intent paths")
+    ap = argparse.ArgumentParser(
+        description="Visualize terrain + intent paths",
+        epilog=(
+            "Note: --data-dir must be a directory containing *.pt samples, "
+            "or pass a single .pt file path (same flag). "
+            "Example: --data-dir data/raw"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     ap.add_argument("--data-dir", type=str, default=None,
-                    help=f"Raw .pt directory (default: {DATA_DIR})")
+                    help=f"Directory of *.pt files, or one .pt file path (default dir: {DATA_DIR})")
     ap.add_argument("--output-dir", type=str, default=None,
                     help=f"Output images directory (default: {RESULT_DIR})")
     ap.add_argument("--limit", type=int, default=0,
-                    help="Max .pt files to process (0 = all)")
+                    help="Max .pt files to process (0 = all; ignored for single-file input)")
     ap.add_argument("--dpi", type=int, default=120)
     args = ap.parse_args()
 
-    data_dir = Path(args.data_dir) if args.data_dir else DATA_DIR
+    raw = Path(args.data_dir) if args.data_dir else DATA_DIR
     out_dir = Path(args.output_dir) if args.output_dir else RESULT_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    pt_files = sorted(data_dir.glob("*.pt"))
-    if not pt_files:
-        print(f"No .pt files in {data_dir}")
+    if raw.is_file() and raw.suffix.lower() == ".pt":
+        pt_files = [raw]
+        src_label = str(raw)
+    elif raw.is_dir():
+        pt_files = sorted(raw.glob("*.pt"))
+        src_label = str(raw)
+    else:
+        print(
+            f"Not found or not a .pt file / directory: {raw}\n"
+            f"Use a folder with *.pt tensors or the full path to one .pt file."
+        )
         return
-    if args.limit > 0:
+
+    if not pt_files:
+        print(
+            f"No .pt files under {raw}\n"
+            f"  --data-dir must be a directory that contains *.pt (not a subpath to one file only in the name).\n"
+            f"  For one sample: --data-dir /path/to/terrain_00001.pt"
+        )
+        return
+    if args.limit > 0 and len(pt_files) > 1:
         pt_files = pt_files[:args.limit]
-    print(f"Visualizing {len(pt_files)} files: {data_dir} -> {out_dir}")
+    print(f"Visualizing {len(pt_files)} file(s): {src_label} -> {out_dir}")
 
     for p in tqdm(pt_files, desc="Generate visuals"):
         out_path = out_dir / f"{p.stem}.png"

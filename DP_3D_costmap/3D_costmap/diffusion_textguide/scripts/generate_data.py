@@ -187,9 +187,8 @@ INTENT_CATALOG = [
 
 def _calculate_paper_cot(slope_deg):
     """4차 다항식 기반 CoT (Minetti et al.)."""
-    a, b, c, d, e = -1.53e-06, 2.07e-05, 2.20e-03, -3.24e-02, 0.65
+    a, b, c, d, e = 6.19e-07, 3.72e-05, 1.14e-03, 2.37e-03, 0.44
     return (a * slope_deg**4) + (b * slope_deg**3) + (c * slope_deg**2) + (d * slope_deg) + e
-
 
 def _calculate_directional_cot(height_curr, height_next, distance, limit_angle_deg=35.0):
     """이동 방향 기반 CoT. 등반 불가 시 np.inf."""
@@ -787,9 +786,9 @@ def main():
     if args.config:
         config = load_config(args.config)
     else:
-        cfg_path = _ROOT / "configs" / "default_config.yaml"
+        cfg_path = _ROOT / "configs" / "default.yaml"
         if not cfg_path.exists():
-            cfg_path = Path(__file__).resolve().parents[2] / "diffusion_patch" / "configs" / "default_config.yaml"
+            cfg_path = Path(__file__).resolve().parents[2] / "diffusion_textguide" / "configs" / "default.yaml"
         if cfg_path.exists():
             config = load_config(str(cfg_path))
             print(f"Using config: {cfg_path}")

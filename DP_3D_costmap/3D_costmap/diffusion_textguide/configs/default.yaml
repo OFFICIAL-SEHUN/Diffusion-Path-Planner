@@ -1,0 +1,39 @@
+# =============================================================================
+# Text-guided diffusion
+# =============================================================================
+# Usage:
+#   python train.py --config configs/default.yaml --data-dir data/raw
+# Inference loads visual_backbone from checkpoint config; this file is for training defaults.
+# =============================================================================
+
+project_name: "DiffusionTextGuide_Default"
+seed: 42
+
+data:
+  num_samples: 100
+  paths_per_terrain: 100
+  img_size: 100
+  horizon: 120
+  cost_weight: 50.0
+  min_distance_factor: 1.5
+
+gradient:
+  height_range: [0, 5]
+  terrain_scales: [[20,10],[10,5],[5,2]]
+  mass: 10.0
+  gravity: 9.8
+  limit_angle_deg: 25
+  pixel_resolution: 0.5
+  max_iterations: 20000
+
+intent:
+  cost_weights:
+    # alpha: 1.0
+    # beta: 0.8
+    # gamma: 0.1
+    # delta: 1.0
+    alpha: 0.5
+    beta: 1.8
+    gamma: 0.4
+    delta: 2.0
+  risk_threshold_deg: 15.0

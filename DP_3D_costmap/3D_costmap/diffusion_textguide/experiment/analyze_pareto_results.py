@@ -47,6 +47,22 @@ OBJECTIVES = ["cot_mean", "risk_mean", "isr_mean"]
 DIRECTIONS = ["min", "min", "max"]
 
 
+def _safe_pearson_r(x: np.ndarray, y: np.ndarray) -> float:
+    """Pearson correlation; returns nan if undefined (too few samples or zero variance).
+
+    Avoids ``np.corrcoef`` internal divisions that emit RuntimeWarning when std is 0.
+    """
+    x = np.asarray(x, dtype=np.float64).ravel()
+    y = np.asarray(y, dtype=np.float64).ravel()
+    if x.shape[0] < 2 or y.shape[0] != x.shape[0]:
+        return float("nan")
+    sx = float(np.std(x, ddof=1))
+    sy = float(np.std(y, ddof=1))
+    if not (np.isfinite(sx) and np.isfinite(sy)) or sx <= 0.0 or sy <= 0.0:
+        return float("nan")
+    return float(np.corrcoef(x, y)[0, 1])
+
+
 def _paper_rcparams() -> None:
     plt.rcParams.update(
         {
@@ -638,7 +654,7 @@ def _tradeoff_strength_phrase(sub: pd.DataFrame, col_x: str, col_y: str, _dir_x:
     x, y = x[mask], y[mask]
     if len(x) < 3:
         return "unclear (insufficient valid Pareto samples)."
-    c = np.corrcoef(x, y)[0, 1]
+    c = _safe_pearson_r(x, y)
     if not np.isfinite(c):
         return "unclear (correlation undefined)."
     xr = float(np.nanmax(x) - np.nanmin(x))
@@ -779,7 +795,7 @@ def write_analysis_summary(
         cv = cross["mean_cot"].to_numpy()
         mask = np.isfinite(fv) & np.isfinite(iv) & np.isfinite(cv)
         if mask.sum() >= 3:
-            rho = np.corrcoef(cv[mask], iv[mask])[0, 1]
+            rho = _safe_pearson_r(cv[mask], iv[mask])
             if np.isfinite(rho):
                 lines.append(
                     f"- Rough correlation across grouped tuples between mean CoT and mean ISR: ρ ≈ **{rho:.2f}** (cautious: not causal)."

@@ -12,6 +12,7 @@ Usage:
 import os
 import sys
 import argparse
+import time
 from typing import Optional
 import yaml
 import numpy as np
@@ -31,7 +32,10 @@ sys.path.insert(0, str(_ROOT))
 
 from model.network import ConditionalPathModel
 from model.diffusion import DiffusionScheduler
-from data_loader import TextGuideDataset, build_vocab
+from data_loader import TextGuideDataset, build_vocab, text_to_tokens
+from experiment.ablation_logger import AblationLogger
+from experiment.utils import load_terrain
+from experiment.metrics import compute_all_metrics
 
 
 def load_config(path: str) -> dict:
@@ -88,7 +92,6 @@ def visualize_sample(model, scheduler, dataset, epoch, device, out_dir):
     gt_px = to_pixels(gt_path)
     gen_px = to_pixels(gen_path)
 
-    # Slope map (deg)
     ax0 = axes[0]
     im0 = ax0.imshow(slope_norm * 90.0, cmap="jet", origin="lower", vmin=0, vmax=35)
     ax0.plot(gt_px[:, 0], gt_px[:, 1], "g-", lw=2, alpha=0.7, label="GT")
@@ -99,7 +102,6 @@ def visualize_sample(model, scheduler, dataset, epoch, device, out_dir):
     ax0.axis("off")
     fig.colorbar(im0, ax=ax0, fraction=0.046, pad=0.02)
 
-    # Height map (normalized)
     ax1 = axes[1]
     im1 = ax1.imshow(height_norm, cmap="terrain", origin="lower")
     ax1.plot(gt_px[:, 0], gt_px[:, 1], "g-", lw=2, alpha=0.7, label="GT")
@@ -113,15 +115,186 @@ def visualize_sample(model, scheduler, dataset, epoch, device, out_dir):
     fig.suptitle(f"Epoch {epoch}", fontsize=11)
 
     os.makedirs(out_dir, exist_ok=True)
-    fig.savefig(os.path.join(out_dir, f"sample_epoch_{epoch:05d}.png"),
-                dpi=100, bbox_inches="tight")
+    out_path = os.path.join(out_dir, f"sample_epoch_{epoch:05d}.png")
+    fig.savefig(out_path, dpi=100, bbox_inches="tight")
     plt.close(fig)
     model.train()
+    return out_path
 
+
+# ── Validation helpers ────────────────────────────────────────────────────────
+
+@torch.no_grad()
+def compute_val_loss(
+    model: ConditionalPathModel,
+    scheduler: DiffusionScheduler,
+    val_loader: DataLoader,
+    device: torch.device,
+    use_amp: bool,
+) -> float:
+    """Compute held-out noise-prediction MSE (cheap — no DDPM sampling)."""
+    model.eval()
+    total_loss = 0.0
+    n_batches = 0
+    for costmaps, paths, tokens in val_loader:
+        costmaps = costmaps.to(device)
+        paths = paths.to(device)
+        tokens = tokens.to(device)
+        start_pos = paths[:, 0, :]
+        goal_pos = paths[:, -1, :]
+        B = paths.shape[0]
+        t = torch.randint(0, scheduler.timesteps, (B,), device=device)
+        noisy_paths, noise = scheduler.forward_process(paths, t)
+        with autocast(enabled=use_amp):
+            pred_noise = model(
+                noisy_paths, t, costmaps,
+                start_pos=start_pos, goal_pos=goal_pos,
+                text_tokens=tokens,
+            )
+            loss = F.mse_loss(pred_noise, noise)
+        total_loss += loss.item()
+        n_batches += 1
+    model.train()
+    return total_loss / max(n_batches, 1)
+
+
+@torch.no_grad()
+def compute_full_val_metrics(
+    model: ConditionalPathModel,
+    scheduler: DiffusionScheduler,
+    val_pt_files: list,
+    config: dict,
+    device: torch.device,
+    vocab: dict,
+    max_samples: int = 50,
+) -> dict:
+    """Run DDPM sampling on held-out terrain files and compute all metrics.
+
+    Returns a dict with keys:
+      isr, mean_cot, mean_risk, inference_latency_s, max_risk,
+      isr_per_intent (dict[str, float])
+    """
+    model.eval()
+
+    d_cfg = config.get("data", {})
+    diff_cfg = config.get("diffusion", {})
+    cw = config.get("intent", {}).get("cost_weights", {})
+    horizon = d_cfg.get("horizon", 120)
+    img_size = d_cfg.get("img_size", 100)
+    pixel_res = config.get("gradient", {}).get("pixel_resolution", 0.5)
+    limit_deg = config.get("gradient", {}).get("limit_angle_deg", 25.0)
+    risk_thresh = config.get("intent", {}).get("risk_threshold_deg", 15.0)
+
+    isr_list: list[float] = []
+    cot_list: list[float] = []
+    risk_list: list[float] = []
+    latency_list: list[float] = []
+    per_intent: dict[str, list[float]] = {}
+
+    n_collected = 0
+    for pt_path in val_pt_files:
+        if n_collected >= max_samples:
+            break
+        try:
+            t_data = load_terrain(str(pt_path))
+        except Exception:
+            continue
+
+        paths_arr = t_data["paths"]          # [N, horizon, 2] numpy
+        instructions = t_data.get("instructions", [])
+        intent_types = t_data.get("intent_types", [])
+        intent_params_list = t_data.get("intent_params", [])
+        t_img_size = int(t_data.get("img_size", img_size))
+        start = t_data.get("start_position", (0, 0))
+        goal = t_data.get("goal_position", (t_img_size - 1, t_img_size - 1))
+        slope_map_deg = t_data["slope_map"]
+        height_map = t_data["height_map"]
+        costmap_t = torch.from_numpy(t_data["costmap"]).float().unsqueeze(0).to(device)
+
+        s_norm = torch.tensor(
+            [(start[1] / t_img_size) * 2 - 1, (start[0] / t_img_size) * 2 - 1],
+            dtype=torch.float32,
+        ).unsqueeze(0).to(device)
+        g_norm = torch.tensor(
+            [(goal[1] / t_img_size) * 2 - 1, (goal[0] / t_img_size) * 2 - 1],
+            dtype=torch.float32,
+        ).unsqueeze(0).to(device)
+
+        for i in range(min(paths_arr.shape[0], max_samples - n_collected)):
+            instr = instructions[i] if i < len(instructions) else ""
+            intent_type = intent_types[i] if i < len(intent_types) else "baseline"
+            intent_params = intent_params_list[i] if i < len(intent_params_list) else {}
+
+            tokens = text_to_tokens(instr, vocab, max_seq_len=16).unsqueeze(0).to(device)
+
+            t0 = time.perf_counter()
+            gen_path_t = scheduler.sample(
+                model, costmap_t, shape=(1, horizon, 2),
+                start_pos=s_norm, end_pos=g_norm,
+                text_tokens=tokens, show_progress=False,
+            )
+            elapsed = time.perf_counter() - t0
+
+            gen_path = gen_path_t[0].cpu().numpy()
+            goal_norm_np = g_norm[0].cpu().numpy()
+
+            try:
+                m = compute_all_metrics(
+                    path_norm=gen_path,
+                    goal_norm=goal_norm_np,
+                    slope_map_deg=slope_map_deg,
+                    height_map=height_map,
+                    img_size=t_img_size,
+                    intent_type=intent_type,
+                    intent_params=intent_params,
+                    start_pos=start,
+                    goal_pos=goal,
+                    pixel_resolution=float(t_data.get("pixel_resolution", pixel_res)),
+                    limit_angle_deg=float(t_data.get("limit_angle_deg", limit_deg)),
+                    risk_threshold_deg=float(t_data.get("risk_threshold_deg", risk_thresh)),
+                    alpha=cw.get("alpha", 1.0),
+                    beta=cw.get("beta", 0.8),
+                    gamma=cw.get("gamma", 0.1),
+                    delta=cw.get("delta", 1.0),
+                )
+            except Exception:
+                continue
+
+            isr_list.append(m.get("isr", float("nan")))
+            cot_list.append(m.get("cumulative_cot", float("nan")))
+            risk_list.append(m.get("risk_integral", float("nan")))
+            latency_list.append(elapsed)
+
+            per_intent.setdefault(intent_type, []).append(m.get("isr", float("nan")))
+            n_collected += 1
+
+    def _safe_mean(lst: list) -> float:
+        clean = [v for v in lst if not (v != v)]  # filter NaN
+        return float(np.mean(clean)) if clean else float("nan")
+
+    def _safe_max(lst: list) -> float:
+        clean = [v for v in lst if not (v != v)]
+        return float(np.max(clean)) if clean else float("nan")
+
+    isr_per_intent_mean = {k: _safe_mean(v) for k, v in per_intent.items()}
+
+    model.train()
+    return {
+        "isr": _safe_mean(isr_list),
+        "mean_cot": _safe_mean(cot_list),
+        "mean_risk": _safe_mean(risk_list),
+        "inference_latency_s": _safe_mean(latency_list),
+        "max_risk": _safe_max(risk_list),
+        "isr_per_intent": isr_per_intent_mean,
+    }
+
+
+# ── Main training function ────────────────────────────────────────────────────
 
 def train(
     config: dict,
     data_dir: str,
+    val_dir: str,
     device_str: str = "cuda",
     resume_from: Optional[str] = None,
 ):
@@ -133,26 +306,50 @@ def train(
     diff_cfg = config.get("diffusion", {})
     m_cfg = config.get("model", {})
     t_cfg = config.get("training", {})
+    l_cfg = config.get("logging", {})
 
     horizon = d_cfg.get("horizon", 120)
     max_seq_len = 16
 
-    # --- Dataset ---
+    # ── Logging config ────────────────────────────────────────────────────────
+    val_loss_interval = int(l_cfg.get("val_loss_interval", 200))
+    val_interval = int(l_cfg.get("val_interval", 2000))
+    val_max_samples = int(l_cfg.get("val_max_samples", 50))
+    log_dir = str(_ROOT / l_cfg.get("log_dir", "logs/ablation"))
+    backbone_name = m_cfg.get("visual_backbone", "unknown")
+
+    # ── Datasets (train / val fully separated) ────────────────────────────────
     vocab = build_vocab()
-    dataset = TextGuideDataset(data_dir, max_seq_len=max_seq_len, vocab=vocab)
+    train_dataset = TextGuideDataset(data_dir, max_seq_len=max_seq_len, vocab=vocab)
+    val_dataset   = TextGuideDataset(val_dir,  max_seq_len=max_seq_len, vocab=vocab)
+
+    # val .pt files are used for full metric computation (ISR/CoT/Risk/Latency)
+    val_pt_files = sorted(Path(val_dir).glob("*.pt"))
+    if not val_pt_files:
+        raise FileNotFoundError(f"No .pt files found in val_dir: {val_dir}")
+
+    print(f"Train: {len(train_dataset)} samples from {data_dir}")
+    print(f"Val  : {len(val_dataset)} samples from {val_dir} "
+          f"({len(val_pt_files)} terrain files)")
 
     batch_size = t_cfg.get("batch_size", 64)
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True,
-                        num_workers=4, pin_memory=True, drop_last=True)
+    loader = DataLoader(
+        train_dataset, batch_size=batch_size, shuffle=True,
+        num_workers=4, pin_memory=True, drop_last=True,
+    )
+    val_loader = DataLoader(
+        val_dataset, batch_size=batch_size, shuffle=False,
+        num_workers=2, pin_memory=True, drop_last=False,
+    )
 
-    # --- Model ---
+    # ── Model ─────────────────────────────────────────────────────────────────
     model = ConditionalPathModel(
         transition_dim=2,
         dim=m_cfg.get("base_dim", 64),
         horizon=horizon,
         visual_dim=m_cfg.get("image_feat_dim", 256),
         text_dim=256,
-        vocab_size=dataset.vocab_size,
+        vocab_size=train_dataset.vocab_size,
         max_seq_len=max_seq_len,
         visual_backbone=m_cfg.get("visual_backbone", "convnext"),
         visual_pretrained=m_cfg.get("timm_pretrained", m_cfg.get("convnext_pretrained", True)),
@@ -164,7 +361,7 @@ def train(
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Model parameters: {n_params:,}")
 
-    # --- Diffusion ---
+    # ── Diffusion ─────────────────────────────────────────────────────────────
     scheduler = DiffusionScheduler(
         timesteps=diff_cfg.get("timesteps", 200),
         beta_start=diff_cfg.get("beta_start", 0.0001),
@@ -172,7 +369,7 @@ def train(
         device=device,
     )
 
-    # --- Optimizer ---
+    # ── Optimizer ─────────────────────────────────────────────────────────────
     lr = t_cfg.get("learning_rate", 1e-4)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
@@ -205,29 +402,47 @@ def train(
             print("Warning: checkpoint vocab differs from build_vocab(); using checkpoint is OK if keys match.")
         print(f"Resumed from {ckpt_path} (completed epoch {done}, next epoch {start_epoch})")
 
-    # --- WandB (optional) ---
+    # ── Ablation Logger ───────────────────────────────────────────────────────
+    logger = AblationLogger(
+        backbone=backbone_name,
+        log_dir=log_dir,
+        param_count=n_params,
+    )
+
+    # ── WandB (optional) ──────────────────────────────────────────────────────
     use_wandb = False
     try:
         import wandb
-        run = wandb.init(project="diffusion-textguide", config=config)
+        run = wandb.init(
+            project="diffusion-textguide",
+            name=f"{backbone_name}_{time.strftime('%m%d_%H%M')}",
+            config=config,
+        )
         use_wandb = run is not None and hasattr(wandb, "log")
-        if not use_wandb and run is not None:
+        if use_wandb:
+            # Static summary: param_count logged once, visible in run overview
+            wandb.summary["param_count"] = n_params
+        elif run is not None:
             print("WandB run started but .log unavailable, logging to stdout only")
-        elif run is None:
+        else:
             print("WandB not available, logging to stdout only")
     except Exception as e:
         use_wandb = False
         print("WandB not available, logging to stdout only:", e)
 
-    # --- Training loop ---
+    # ── Training loop ─────────────────────────────────────────────────────────
     print(f"\nTraining: {epochs} epochs, batch_size={batch_size}, lr={lr}")
     print(f"AMP (fp16): {'on' if use_amp else 'off'}")
     print(f"Checkpoint every {log_interval} epochs → {ckpt_dir}")
-    print(f"Dataset: {len(dataset)} samples, vocab_size={dataset.vocab_size}")
-    print("=" * 60)
+    print(f"Val loss every {val_loss_interval} epochs | "
+          f"Full metrics every {val_interval} epochs ({val_max_samples} samples)")
+    print(f"Dataset: {len(train_dataset)} train / {len(val_dataset)} val  "
+          f"(vocab_size={train_dataset.vocab_size})")
+    print("=" * 62)
 
     if start_epoch > epochs:
         print(f"Nothing to do: start_epoch {start_epoch} > training.epochs {epochs}")
+        logger.close()
         return
 
     for epoch in range(start_epoch, epochs + 1):
@@ -272,17 +487,96 @@ def train(
             global_step += 1
 
         avg_loss = epoch_loss / max(n_batches, 1)
+        current_lr = optimizer.param_groups[0]["lr"]
+
+        # ── Secondary: train_loss + lr (every epoch) ──────────────────────────
+        logger.accumulate(train_loss=avg_loss, lr=current_lr)
 
         if use_wandb:
             try:
-                wandb.log({"train_loss": avg_loss, "epoch": epoch}, step=global_step)
+                wandb.log({
+                    "train/loss": avg_loss,
+                    "train/lr": current_lr,
+                    "epoch": epoch,
+                }, step=global_step)
             except Exception:
                 use_wandb = False
-                print("WandB logging disabled after error; continuing training on stdout only.")
+                print("WandB logging disabled after error; continuing on stdout only.")
+
+        # ── Primary: val_loss (cheap; every val_loss_interval) ────────────────
+        epoch_val_loss: Optional[float] = None
+        if epoch % val_loss_interval == 0:
+            epoch_val_loss = compute_val_loss(model, scheduler, val_loader, device, use_amp)
+            logger.accumulate(val_loss=epoch_val_loss)
+            if use_wandb:
+                try:
+                    wandb.log({
+                        "val/val_loss": epoch_val_loss,
+                        "epoch": epoch,
+                    }, step=global_step)
+                except Exception:
+                    use_wandb = False
+
+        # ── Primary: full metrics (expensive; every val_interval) ─────────────
+        if epoch % val_interval == 0:
+            # val_loss is guaranteed here — recompute if val_interval is not a
+            # multiple of val_loss_interval (edge case in custom configs).
+            if epoch_val_loss is None:
+                epoch_val_loss = compute_val_loss(model, scheduler, val_loader, device, use_amp)
+                logger.accumulate(val_loss=epoch_val_loss)
+
+            snap_path = visualize_sample(model, scheduler, train_dataset, epoch, device, vis_dir)
+            logger.accumulate(snapshot_path=snap_path)
+
+            fm = compute_full_val_metrics(
+                model, scheduler, val_pt_files, config,
+                device, vocab, max_samples=val_max_samples,
+            )
+            logger.accumulate(
+                isr=fm["isr"],
+                mean_cot=fm["mean_cot"],
+                mean_risk=fm["mean_risk"],
+                inference_latency_s=fm["inference_latency_s"],
+                max_risk=fm["max_risk"],
+                isr_per_intent=fm["isr_per_intent"],
+            )
+            logger.print_summary(epoch, total_epochs=epochs)
+
+            if use_wandb:
+                try:
+                    # Build per-intent ISR sub-dict for WandB
+                    intent_isr_dict = {
+                        f"val/isr_{k.replace('+', '_')}": v
+                        for k, v in fm["isr_per_intent"].items()
+                    }
+                    # Load snapshot as WandB image
+                    wb_img = {"val/snapshot": wandb.Image(snap_path, caption=f"epoch {epoch}")}
+
+                    wandb.log({
+                        # Primary
+                        "val/val_loss": epoch_val_loss,
+                        "val/isr": fm["isr"],
+                        "val/mean_cot": fm["mean_cot"],
+                        "val/mean_risk": fm["mean_risk"],
+                        "val/inference_latency_s": fm["inference_latency_s"],
+                        "val/param_count": n_params,
+                        # Secondary
+                        "val/max_risk": fm["max_risk"],
+                        "val/best_val_epoch": logger.best_val_epoch,
+                        **intent_isr_dict,
+                        **wb_img,
+                        "epoch": epoch,
+                    }, step=global_step)
+                except Exception:
+                    use_wandb = False
+
+        # ── Flush logger row for this epoch ───────────────────────────────────
+        logger.flush(epoch)
 
         if epoch % 50 == 0 or epoch == 1:
             print(f"Epoch {epoch:5d}/{epochs}  loss={avg_loss:.6f}")
 
+        # ── Checkpoint ────────────────────────────────────────────────────────
         if epoch % log_interval == 0:
             ckpt_path = os.path.join(ckpt_dir, f"epoch_{epoch:05d}.pt")
             save_checkpoint(
@@ -290,18 +584,22 @@ def train(
                 scaler=scaler if use_amp else None,
             )
             print(f"  → Saved checkpoint: {ckpt_path}")
-            visualize_sample(model, scheduler, dataset, epoch, device, vis_dir)
 
-    # Final save
+    # ── Final save ────────────────────────────────────────────────────────────
     final_path = os.path.join(ckpt_dir, "final_model.pt")
     save_checkpoint(
         model, optimizer, epochs, vocab, config, final_path,
         scaler=scaler if use_amp else None,
     )
     print(f"\nTraining complete. Final model: {final_path}")
+    print(f"Best val epoch: {logger.best_val_epoch}")
+
+    logger.close()
 
     if use_wandb:
         try:
+            wandb.summary["best_val_epoch"] = logger.best_val_epoch
+            wandb.summary["param_count"] = n_params
             wandb.finish()
         except Exception:
             pass
@@ -311,7 +609,9 @@ def main():
     ap = argparse.ArgumentParser(description="Train text-conditioned diffusion path planner")
     ap.add_argument("--config", type=str, default=None)
     ap.add_argument("--data-dir", type=str, default=None,
-                    help="Directory with .pt files (default: data/raw)")
+                    help="Training .pt files directory (default: data/raw)")
+    ap.add_argument("--val-dir", type=str, default=None,
+                    help="Validation .pt files directory (default: data/valid)")
     ap.add_argument("--device", type=str, default="cuda")
     ap.add_argument("--epochs", type=int, default=None)
     ap.add_argument("--batch-size", type=int, default=None)
@@ -335,8 +635,9 @@ def main():
         config.setdefault("training", {})["batch_size"] = args.batch_size
 
     data_dir = args.data_dir or str(_ROOT / "data" / "raw")
+    val_dir  = args.val_dir  or str(_ROOT / "data" / "valid")
 
-    train(config, data_dir, device_str=args.device, resume_from=args.resume)
+    train(config, data_dir, val_dir, device_str=args.device, resume_from=args.resume)
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 Text-conditioned Diffusion Path Model
 
 Architecture (from diffusion_patch, extended):
-  - Visual encoder: timm backbone (e.g., ConvNeXt-Tiny / Swin-Tiny) or ResNet-style CNN, [B,2,H,W] → [B, visual_dim]
+  - Visual encoder: timm only — set `model.timm_model_name` in YAML (e.g. convnext_tiny / resnet18 / swin…); scratch = pretrained=False [B,2,H,W] → [B, visual_dim]
   - TextEncoder:   Embedding + Transformer, [B,L] → [B, text_dim]
   - CrossAttention: path features attend to text embedding
   - ConditionalPathModel: 1-D U-Net with FiLM conditioning
@@ -19,6 +19,17 @@ import torch.nn.functional as F
 from typing import Literal, Optional, Tuple
 
 import timm
+
+
+def _require_timm_model_name(timm_model_name: Optional[str]) -> str:
+    """YAML must set `model.timm_model_name` (no code defaults)."""
+    name = (timm_model_name or "").strip()
+    if not name:
+        raise ValueError(
+            "model.timm_model_name is required in the config (e.g. convnext_tiny, resnet18, "
+            "swin_tiny_patch4_window7_224)."
+        )
+    return name
 
 
 # ============================================================================
@@ -85,76 +96,11 @@ class ResnetBlock1D(nn.Module):
 
 
 # ============================================================================
-# 2-D ResNet Block (for VisualEncoder)
-# ============================================================================
-
-class BasicBlock2D(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int, stride: int = 1,
-                 downsample: Optional[nn.Module] = None):
-        super().__init__()
-        self.conv1 = nn.Conv2d(in_ch, out_ch, 3, stride=stride, padding=1, bias=False)
-        self.gn1 = nn.GroupNorm(8, out_ch)
-        self.conv2 = nn.Conv2d(out_ch, out_ch, 3, padding=1, bias=False)
-        self.gn2 = nn.GroupNorm(8, out_ch)
-        self.downsample = downsample
-        self.relu = nn.ReLU(inplace=True)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        identity = x
-        out = self.relu(self.gn1(self.conv1(x)))
-        out = self.gn2(self.conv2(out))
-        if self.downsample is not None:
-            identity = self.downsample(x)
-        return self.relu(out + identity)
-
-
-# ============================================================================
 # Visual encoders  [B, 2, H, W] → [B, feature_dim]
 # ============================================================================
 
-class VisualEncoderResNet(nn.Module):
-    """Lightweight ResNet-style encoder (from scratch, no ImageNet weights)."""
-
-    def __init__(self, input_channels: int = 2, feature_dim: int = 256):
-        super().__init__()
-        self.conv1 = nn.Conv2d(input_channels, 64, 7, stride=2, padding=3, bias=False)
-        self.gn1 = nn.GroupNorm(8, 64)
-        self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(3, stride=2, padding=1)
-
-        self.layer1 = self._make_layer(64, 64, 2)
-        self.layer2 = self._make_layer(64, 128, 2, stride=2)
-        self.layer3 = self._make_layer(128, 256, 2, stride=2)
-        self.layer4 = self._make_layer(256, 512, 2, stride=2)
-
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(512, feature_dim)
-        self.act = nn.SiLU()
-
-    def _make_layer(self, in_ch: int, out_ch: int, blocks: int, stride: int = 1):
-        downsample = None
-        if stride != 1 or in_ch != out_ch:
-            downsample = nn.Sequential(
-                nn.Conv2d(in_ch, out_ch, 1, stride=stride, bias=False),
-                nn.GroupNorm(8, out_ch),
-            )
-        layers = [BasicBlock2D(in_ch, out_ch, stride, downsample)]
-        for _ in range(1, blocks):
-            layers.append(BasicBlock2D(out_ch, out_ch))
-        return nn.Sequential(*layers)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.maxpool(self.relu(self.gn1(self.conv1(x))))
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
-        x = self.avgpool(x).flatten(1)
-        return self.act(self.fc(x))
-
-
 class VisualEncoderTimm(nn.Module):
-    """Generic timm visual encoder wrapper (e.g., ConvNeXt/Swin)."""
+    """Generic timm visual encoder wrapper (e.g., ConvNeXt/Swin/ResNet)."""
 
     def __init__(
         self,
@@ -190,13 +136,34 @@ class VisualEncoderTimm(nn.Module):
         return self.act(self.fc(x))
 
 
+class VisualEncoderResNet(VisualEncoderTimm):
+    """Backward-compatible alias; pass ``timm_model_name`` (e.g. resnet18) like ``ConditionalPathModel``."""
+
+    def __init__(
+        self,
+        input_channels: int = 2,
+        feature_dim: int = 256,
+        pretrained: bool = False,
+        timm_model_name: Optional[str] = None,
+        input_img_size: Optional[int] = None,
+    ):
+        name = _require_timm_model_name(timm_model_name)
+        super().__init__(
+            input_channels=input_channels,
+            feature_dim=feature_dim,
+            pretrained=pretrained,
+            model_name=name,
+            input_img_size=input_img_size,
+        )
+
+
 class VisualEncoderConvNeXt(VisualEncoderTimm):
     """Backward-compatible alias for older imports."""
     pass
 
 
-# Backward compatibility: historical module name
-VisualEncoder = VisualEncoderResNet
+# Backward compatibility: historical module name (generic timm wrapper)
+VisualEncoder = VisualEncoderTimm
 
 
 # ============================================================================
@@ -296,23 +263,14 @@ class ConditionalPathModel(nn.Module):
         # Legacy support: older configs may still carry `convnext_pretrained`.
         base_pretrained = visual_pretrained if convnext_pretrained is None else convnext_pretrained
         use_timm_pretrained = base_pretrained if timm_pretrained is None else timm_pretrained
-        if visual_backbone in {"convnext", "swin_tiny"}:
-            backbone_name = timm_model_name
-            if backbone_name is None:
-                backbone_name = (
-                    "swin_tiny_patch4_window7_224"
-                    if visual_backbone == "swin_tiny"
-                    else "convnext_tiny"
-                )
-            self.visual_encoder = VisualEncoderTimm(
-                input_channels=2,
-                feature_dim=visual_dim,
-                pretrained=use_timm_pretrained,
-                model_name=backbone_name,
-                input_img_size=input_img_size,
-            )
-        else:
-            self.visual_encoder = VisualEncoderResNet(input_channels=2, feature_dim=visual_dim)
+        backbone_name = _require_timm_model_name(timm_model_name)
+        self.visual_encoder = VisualEncoderTimm(
+            input_channels=2,
+            feature_dim=visual_dim,
+            pretrained=use_timm_pretrained,
+            model_name=backbone_name,
+            input_img_size=input_img_size,
+        )
         self.text_encoder = TextEncoder(vocab_size=vocab_size, embed_dim=text_dim,
                                         max_seq_len=max_seq_len)
 

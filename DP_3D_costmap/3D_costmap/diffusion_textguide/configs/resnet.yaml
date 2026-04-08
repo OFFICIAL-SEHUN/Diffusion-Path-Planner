@@ -1,19 +1,25 @@
 # =============================================================================
-# Text-guided diffusion — Swin-Tiny visual backbone (timm, IN1K pretrained)
+# Text-guided diffusion — ResNet (timm)
 # =============================================================================
 # Usage:
-#   python train.py --config configs/swin_tiny.yaml --data-dir data/raw
-# Inference loads visual_backbone from checkpoint config; this file is for training defaults.
+#   python train.py --config configs/resnet.yaml --data-dir data/raw
+# Notes:
+#   - Training reads existing .pt files from --data-dir.
+#   - Set timm_pretrained: true for ImageNet init; false for scratch.
+#   - In `data`, only img_size/horizon are directly consumed by training.
 # =============================================================================
 
-project_name: "DiffusionTextGuide_SwinTiny"
+project_name: "DiffusionTextGuide_ResNet"
 seed: 42
 
 data:
-  num_samples: 100
-  paths_per_terrain: 100
+  # Used directly in training/model shape
   img_size: 100
   horizon: 120
+
+  # Generation metadata (used only when re-generating dataset)
+  num_samples: 100
+  paths_per_terrain: 100
   cost_weight: 50.0
   min_distance_factor: 1.5
 
@@ -39,22 +45,21 @@ diffusion:
   beta_start: 0.0001
   beta_end: 0.02
 
-# --- Swin-Tiny only (timm model: swin_tiny_patch4_window7_224) ---
 model:
-  base_dim: 128
+  base_dim: 64
   time_embed_dim: 256
   image_feat_dim: 256
-  visual_backbone: swin_tiny
-  timm_model_name: swin_tiny_patch4_window7_224
-  timm_pretrained: true
+  visual_backbone: resnet
+  timm_model_name: resnet18
+  timm_pretrained: false
 
 training:
-  epochs: 10000
-  batch_size: 64
+  epochs: 30000
+  batch_size: 128
   learning_rate: 0.00003
-  checkpoint_dir: "checkpoints/swin_tiny"
-  model_name: "diffusion_textguide_swin_tiny.pt"
-  log_interval: 1000
+  checkpoint_dir: "checkpoints/resnet"
+  model_name: "diffusion_textguide_resnet.pt"
+  log_interval: 10000
   use_amp: true
 
 inference:

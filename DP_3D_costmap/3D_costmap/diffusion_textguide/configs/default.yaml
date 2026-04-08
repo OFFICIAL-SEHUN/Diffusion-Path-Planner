@@ -4,6 +4,7 @@
 # Usage:
 #   python train.py --config configs/default.yaml --data-dir data/raw
 # Inference loads visual_backbone from checkpoint config; this file is for training defaults.
+# default.yaml : Pseudo lebel (A*) Path test mode default config
 # =============================================================================
 
 project_name: "DiffusionTextGuide_Default"

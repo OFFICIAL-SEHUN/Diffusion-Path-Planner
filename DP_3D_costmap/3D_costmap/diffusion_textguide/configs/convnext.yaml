@@ -1,0 +1,65 @@
+# =============================================================================
+# Text-guided diffusion — ConvNeXt (timm)
+# =============================================================================
+# Usage:
+#   python train.py --config configs/convnext.yaml --data-dir data/raw
+# Notes:
+#   - Training reads existing .pt files from --data-dir.
+#   - In `data`, only img_size/horizon are directly consumed by training.
+# =============================================================================
+
+project_name: "DiffusionTextGuide_ConvNeXt"
+seed: 42
+
+data:
+  # Used directly in training/model shape
+  img_size: 100
+  horizon: 120
+
+  # Generation metadata (used only when re-generating dataset)
+  num_samples: 100
+  paths_per_terrain: 100
+  cost_weight: 50.0
+  min_distance_factor: 1.5
+
+gradient:
+  height_range: [0, 5]
+  terrain_scales: [[20,10],[10,5],[5,2]]
+  mass: 10.0
+  gravity: 9.8
+  limit_angle_deg: 25
+  pixel_resolution: 0.5
+  max_iterations: 20000
+
+intent:
+  cost_weights:
+    alpha: 2.0
+    beta: 1.5
+    gamma: 0.5
+    delta: 2.0
+  risk_threshold_deg: 15.0
+
+diffusion:
+  timesteps: 200
+  beta_start: 0.0001
+  beta_end: 0.02
+
+model:
+  base_dim: 64
+  time_embed_dim: 256
+  image_feat_dim: 256
+  visual_backbone: convnext
+  timm_model_name: convnext_tiny
+  timm_pretrained: true
+
+training:
+  epochs: 20000
+  batch_size: 128
+  learning_rate: 0.00003
+  checkpoint_dir: "checkpoints/convnext"
+  model_name: "diffusion_textguide_convnext.pt"
+  log_interval: 1000
+  use_amp: true
+
+inference:
+  show_progress: true

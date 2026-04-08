@@ -4,8 +4,8 @@
 
 Usage (from diffusion_textguide/):
 python experiment/epoch_intent_grid.py \
-  --config configs/convnext_tiny.yaml \
-  --checkpoint-dir checkpoints/convnext_tiny \
+  --config configs/convnext.yaml \
+  --checkpoint-dir checkpoints/convnext \
   --output experiment/epoch_intent_grid_convnext_2k.png
 """
 
@@ -169,8 +169,8 @@ def terrain_tensors(terrain: dict):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", type=str, default="configs/convnext_tiny.yaml")
-    ap.add_argument("--checkpoint-dir", type=str, default="checkpoints/convnext_tiny")
+    ap.add_argument("--config", type=str, default="configs/convnext.yaml")
+    ap.add_argument("--checkpoint-dir", type=str, default="checkpoints/convnext")
     ap.add_argument(
         "--terrain",
         type=str,

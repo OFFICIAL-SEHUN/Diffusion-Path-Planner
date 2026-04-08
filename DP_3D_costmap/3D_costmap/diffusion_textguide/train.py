@@ -2,8 +2,11 @@
 Text-conditioned Diffusion Path Planner — Training Script
 
 Usage:
-  python train.py --config configs/default_config.yaml --data-dir data/raw
-python train.py --config configs/convnext_tiny.yaml --data-dir data/raw    --resume checkpoints/convnext_tiny_pretrained/epoch_16000.pt
+  python train.py --config configs/default.yaml --data-dir data/raw
+  python train.py --config configs/convnext.yaml --data-dir data/raw
+  python train.py --config configs/resnet.yaml --data-dir data/raw
+  python train.py --config configs/swin.yaml --data-dir data/raw
+  # python train.py --config configs/convnext.yaml --data-dir data/raw --resume checkpoints/convnext/epoch_16000.pt
 """
 
 import os

@@ -445,7 +445,13 @@ def train(
         logger.close()
         return
 
+    train_loop_start = time.time()
+    _last_val_loss: Optional[float] = None
+
     for epoch in range(start_epoch, epochs + 1):
+        epoch_start = time.time()
+        val_time_this_epoch = 0.0
+
         model.train()
         epoch_loss = 0.0
         n_batches = 0
@@ -506,7 +512,10 @@ def train(
         # ── Primary: val_loss (cheap; every val_loss_interval) ────────────────
         epoch_val_loss: Optional[float] = None
         if epoch % val_loss_interval == 0:
+            _val_t = time.time()
             epoch_val_loss = compute_val_loss(model, scheduler, val_loader, device, use_amp)
+            val_time_this_epoch += time.time() - _val_t
+            _last_val_loss = epoch_val_loss
             logger.accumulate(val_loss=epoch_val_loss)
             if use_wandb:
                 try:
@@ -519,6 +528,7 @@ def train(
 
         # ── Primary: full metrics (expensive; every val_interval) ─────────────
         if epoch % val_interval == 0:
+            _full_val_t = time.time()
             # val_loss is guaranteed here — recompute if val_interval is not a
             # multiple of val_loss_interval (edge case in custom configs).
             if epoch_val_loss is None:
@@ -532,6 +542,7 @@ def train(
                 model, scheduler, val_pt_files, config,
                 device, vocab, max_samples=val_max_samples,
             )
+            val_time_this_epoch += time.time() - _full_val_t
             logger.accumulate(
                 isr=fm["isr"],
                 mean_cot=fm["mean_cot"],
@@ -570,11 +581,48 @@ def train(
                 except Exception:
                     use_wandb = False
 
+        # ── Timing ────────────────────────────────────────────────────────────
+        epoch_time_s = time.time() - epoch_start
+        logger.accumulate(
+            epoch_time_s=epoch_time_s,
+            val_time_s=val_time_this_epoch if val_time_this_epoch > 0 else None,
+        )
+        if use_wandb:
+            try:
+                _wb_timing: dict = {"train/epoch_time_s": epoch_time_s, "epoch": epoch}
+                if val_time_this_epoch > 0:
+                    _wb_timing["val/val_time_s"] = val_time_this_epoch
+                wandb.log(_wb_timing, step=global_step)
+            except Exception:
+                use_wandb = False
+
         # ── Flush logger row for this epoch ───────────────────────────────────
         logger.flush(epoch)
 
         if epoch % 50 == 0 or epoch == 1:
-            print(f"Epoch {epoch:5d}/{epochs}  loss={avg_loss:.6f}")
+            _elapsed = time.time() - train_loop_start
+            _done = epoch - start_epoch + 1
+            _remaining = epochs - epoch
+            _avg_ep = _elapsed / _done
+            _eta_s = _avg_ep * _remaining
+            def _fmt_dur(s: float) -> str:
+                h, s = divmod(int(s), 3600)
+                m, s = divmod(s, 60)
+                return (f"{h}h {m:02d}m {s:02d}s" if h else
+                        f"{m}m {s:02d}s" if m else f"{s}s")
+            _pct = epoch / epochs
+            _bar_w = 20
+            _filled = int(_bar_w * _pct)
+            _bar = "█" * _filled + "░" * (_bar_w - _filled)
+            _val_str = f"  val={_last_val_loss:.6f}" if _last_val_loss is not None else ""
+            print(
+                f"[{_bar}] {_pct*100:5.1f}%  "
+                f"ep {epoch:>6}/{epochs}  "
+                f"loss={avg_loss:.6f}{_val_str}  "
+                f"{epoch_time_s:.1f}s/ep  "
+                f"ETA {_fmt_dur(_eta_s)}  "
+                f"elapsed {_fmt_dur(_elapsed)}"
+            )
 
         # ── Checkpoint ────────────────────────────────────────────────────────
         if epoch % log_interval == 0:

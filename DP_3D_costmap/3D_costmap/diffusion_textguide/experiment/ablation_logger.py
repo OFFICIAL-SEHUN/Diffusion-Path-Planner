@@ -68,6 +68,9 @@ _SECONDARY = [
     "lr",
     "best_val_epoch",
     "max_risk",
+    "epoch_time_s",
+    "val_time_s",
+    "total_time_s",
 ] + [f"isr_{k.replace('+', '_')}" for k in KNOWN_INTENTS] + [
     "snapshot_path",
 ]
@@ -116,6 +119,7 @@ class AblationLogger:
         self._best_val_loss = float("inf")
         self._best_val_epoch: int = -1
         self._buf: dict = {}
+        self._train_start_time: float = time.time()
 
         ts = time.strftime("%Y%m%d_%H%M%S")
         Path(log_dir).mkdir(parents=True, exist_ok=True)
@@ -151,6 +155,8 @@ class AblationLogger:
         max_risk: Optional[float] = None,
         isr_per_intent: Optional[Dict[str, float]] = None,
         snapshot_path: Optional[str] = None,
+        epoch_time_s: Optional[float] = None,
+        val_time_s: Optional[float] = None,
     ) -> None:
         """Buffer metric values for the current epoch.  Call multiple times
         per epoch; all values are merged and written together at :meth:`flush`.
@@ -176,6 +182,10 @@ class AblationLogger:
                 self._buf[_intent_col(intent)] = val
         if snapshot_path is not None:
             self._buf["snapshot_path"] = snapshot_path
+        if epoch_time_s is not None:
+            self._buf["epoch_time_s"] = epoch_time_s
+        if val_time_s is not None:
+            self._buf["val_time_s"] = val_time_s
 
     def flush(self, epoch: int) -> None:
         """Write the buffered metrics for *epoch* to the CSV and reset the buffer."""
@@ -189,6 +199,7 @@ class AblationLogger:
         row["epoch"] = epoch
         row["param_count"] = self._param_count
         row["best_val_epoch"] = self._best_val_epoch if self._best_val_epoch >= 0 else ""
+        row["total_time_s"] = time.time() - self._train_start_time
         row.update(self._buf)
 
         self._writer.writerow(row)
@@ -221,6 +232,17 @@ class AblationLogger:
                         pass
 
         best_ep = self._best_val_epoch if self._best_val_epoch >= 0 else "—"
+        total_elapsed = time.time() - self._train_start_time
+
+        def _fmt_time(seconds: float) -> str:
+            h = int(seconds // 3600)
+            m = int((seconds % 3600) // 60)
+            s = seconds % 60
+            if h > 0:
+                return f"{h}h {m:02d}m {s:04.1f}s"
+            if m > 0:
+                return f"{m}m {s:04.1f}s"
+            return f"{s:.2f}s"
 
         W = 64
         lines = [
@@ -228,7 +250,7 @@ class AblationLogger:
             f"  Backbone Ablation Log  [Epoch {ep_str}]  backbone={self._backbone}",
             f"{'─'*W}",
             f"  {'【 Primary 】':<30}",
-            f"  {'─'*W//2}",
+            f"  {'─'*(W//2)}",
             f"  {'Val Loss':<28}  {_fmt('val_loss'):>10}",
             f"  {'ISR':<28}  {_fmt('isr'):>10}",
             f"  {'Mean CoT':<28}  {_fmt('mean_cot', '.3f'):>10}",
@@ -237,22 +259,28 @@ class AblationLogger:
             f"  {'Param Count':<28}  {self._param_count:>10,}",
             f"{'─'*W}",
             f"  {'【 Secondary 】':<30}",
-            f"  {'─'*W//2}",
+            f"  {'─'*(W//2)}",
             f"  {'Train Loss':<28}  {_fmt('train_loss'):>10}",
             f"  {'Learning Rate':<28}  {_fmt('lr', '.2e'):>10}",
             f"  {'Best Val Epoch':<28}  {str(best_ep):>10}",
             f"  {'Max Risk':<28}  {_fmt('max_risk', '.3f'):>10}",
+            f"{'─'*W}",
+            f"  {'【 Timing 】':<30}",
+            f"  {'─'*(W//2)}",
+            f"  {'Epoch Time':<28}  {_fmt_time(self._buf['epoch_time_s']) if 'epoch_time_s' in self._buf else '—':>10}",
+            f"  {'Val Time':<28}  {_fmt_time(self._buf['val_time_s']) if 'val_time_s' in self._buf else '—':>10}",
+            f"  {'Total Elapsed':<28}  {_fmt_time(total_elapsed):>10}",
         ]
 
         if intent_rows:
-            lines.append(f"  {'─'*W//2}")
+            lines.append(f"  {'─'*(W//2)}")
             lines.append(f"  {'Intent-wise ISR':<28}")
             for label, val in intent_rows:
                 lines.append(f"    {label:<26}  {val:>10}")
 
         snap = self._buf.get("snapshot_path", "")
         if snap:
-            lines.append(f"  {'─'*W//2}")
+            lines.append(f"  {'─'*(W//2)}")
             lines.append(f"  Snapshot → {snap}")
 
         lines.append(f"{'═'*W}")

@@ -2,10 +2,10 @@
 Text-conditioned Diffusion Path Planner — Training Script
 
 Usage:
-  python train.py --config configs/default.yaml --data-dir data/raw
-  python train.py --config configs/convnext.yaml --data-dir data/raw
-  python train.py --config configs/resnet.yaml --data-dir data/raw
-  python train.py --config configs/swin.yaml --data-dir data/raw
+  python train.py --config configs/default.yaml --data-dir data/raw --val-dir data/valid
+  python train.py --config configs/convnext.yaml --data-dir data/raw --val-dir data/valid
+  python train.py --config configs/resnet.yaml --data-dir data/raw --val-dir data/valid
+  python train.py --config configs/swin.yaml --data-dir data/raw --val-dir data/valid
   # python train.py --config configs/convnext.yaml --data-dir data/raw --resume checkpoints/convnext/epoch_16000.pt
 """
 

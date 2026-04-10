@@ -53,12 +53,12 @@ model:
   timm_pretrained: true
 
 training:
-  epochs: 20000
+  epochs: 5000
   batch_size: 128
   learning_rate: 0.00003
   checkpoint_dir: "checkpoints/convnext"
   model_name: "diffusion_textguide_convnext.pt"
-  log_interval: 5000
+  log_interval: 1000
   use_amp: true
 
 inference:
@@ -67,6 +67,6 @@ inference:
 # ── Ablation logging ──────────────────────────────────────────────────────────
 logging:
   val_loss_interval: 200      # compute held-out val loss every N epochs (cheap)
-  val_interval: 2000          # compute full metrics (ISR/CoT/Risk/Latency) every N epochs
+  val_interval: 1000          # compute full metrics (ISR/CoT/Risk/Latency) every N epochs
   val_max_samples: 50         # max val-terrain samples used for full metric computation
   log_dir: "logs/ablation"

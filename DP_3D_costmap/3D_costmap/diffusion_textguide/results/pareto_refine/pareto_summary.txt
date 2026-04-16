@@ -1,0 +1,20 @@
+Intent | #Pareto | Best CoT | Best Risk | Best ISR
+------------------------------------------------------------
+baseline                   |     156 |    21.54 |      3.97 |     1.00
+left_bias                  |     264 |    25.93 |     16.36 |     0.93
+right_bias                 |     169 |    26.24 |     13.51 |     0.96
+center_bias                |     156 |    21.54 |      3.97 |     1.00
+avoid_steep                |     180 |    21.54 |      3.97 |     1.00
+prefer_flat                |     455 |    24.79 |      6.27 |     0.88
+minimize_elevation_change  |      72 |    21.86 |      3.95 |     0.95
+short_path                 |    1080 |    21.54 |      3.97 |     0.58
+energy_efficient           |      11 |    21.63 |      4.50 |     0.97
+left_bias+avoid_steep      |     195 |    25.97 |     13.81 |     0.96
+right_bias+prefer_flat     |     132 |    23.80 |      9.10 |     0.63
+center_bias+prefer_flat    |      16 |    24.21 |      7.97 |     0.78
+short_path+avoid_steep     |    1080 |    21.54 |      3.97 |     0.76
+energy_efficient+minimize_elevation_change |      48 |    21.88 |      4.23 |     0.96
+
+--- Balanced pick (per-intent floors + utopia distance) ---
+feasibility_min=0.9 (per intent), isr_min=0.7 (per intent)
+No (α,β,γ,δ) satisfied per-intent constraints.

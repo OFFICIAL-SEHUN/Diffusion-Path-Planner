@@ -34,6 +34,8 @@ checkpoints/
 !DP_3D_costmap/3D_costmap/diffusion_textguide/data/**
 !DP_3D_costmap/3D_costmap/diffusion_textguide/data/**/*.pt
 
+!DP_3D_costmap/3D_costmap/diffusion_textguide/results/
+
 *.png
 *.pfm
 *.jpeg

@@ -1,0 +1,10 @@
+{
+  "method": "per-intent floors + utopia distance (CoT\u2193 Risk\u2193 ISR\u2191)",
+  "constraints": {
+    "feasibility_min_per_intent": 0.9,
+    "isr_min_per_intent": 0.7
+  },
+  "num_candidates_passing": 0,
+  "best": null,
+  "top5": []
+}

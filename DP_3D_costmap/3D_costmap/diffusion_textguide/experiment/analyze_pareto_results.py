@@ -3,9 +3,7 @@
 Paper-ready analysis of Pareto sweep results (sweep_results.json).
 
 Usage:
-  python -m experiment.analyze_pareto_results \\
-      --input results/pareto/sweep_results.json \\
-      --output_dir results/analyze_pareto
+  python -m experiment.analyze_pareto_results  --input results/pareto/sweep_results.json --output_dir results/analyze_pareto
 
 Outputs are grouped under *output_dir*:
   - tables/     CSV exports

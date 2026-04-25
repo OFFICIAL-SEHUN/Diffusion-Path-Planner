@@ -50,13 +50,13 @@ model:
   image_feat_dim: 256
   visual_backbone: convnext
   timm_model_name: convnext_tiny
-  timm_pretrained: true
+  timm_pretrained: false
 
 training:
   epochs: 5000
   batch_size: 128
   learning_rate: 0.00003
-  checkpoint_dir: "checkpoints/convnext"
+  checkpoint_dir: "checkpoints/convnext_scratch"
   model_name: "diffusion_textguide_convnext.pt"
   log_interval: 1000
   use_amp: true

@@ -51,13 +51,13 @@ model:
   image_feat_dim: 256
   visual_backbone: resnet
   timm_model_name: resnet18
-  timm_pretrained: false
+  timm_pretrained: true
 
 training:
   epochs: 5000
   batch_size: 128
   learning_rate: 0.00003
-  checkpoint_dir: "checkpoints/resnet"
+  checkpoint_dir: "checkpoints/resnet_pretrained"
   model_name: "diffusion_textguide_resnet.pt"
   log_interval: 1000
   use_amp: true

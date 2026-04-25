@@ -51,13 +51,17 @@ model:
   image_feat_dim: 256
   visual_backbone: swin_tiny
   timm_model_name: swin_tiny_patch4_window7_224
-  timm_pretrained: true
+  timm_pretrained: false
 
 training:
   epochs: 5000
   batch_size: 128
   learning_rate: 0.00003
-  checkpoint_dir: "checkpoints/swin_pretrained"
+<<<<<<< Updated upstream
+  checkpoint_dir: "checkpoints/swin_scratch"
+=======
+  checkpoint_dir: "checkpoints/swin_scratch"
+>>>>>>> Stashed changes
   model_name: "diffusion_textguide_swin.pt"
   log_interval: 1000
   use_amp: true

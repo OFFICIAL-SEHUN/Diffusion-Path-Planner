@@ -1,15 +1,16 @@
 # =============================================================================
-# Text-guided diffusion — Swin-Tiny (timm)
+# Text-guided diffusion — ViT-Tiny (timm)
 # =============================================================================
-# ViT-Tiny: same blocks below; use `configs/vit_tiny.yaml` (timm `vit_tiny_patch16_224`).
 # Usage:
-#   python train.py --config configs/swin.yaml --data-dir data/raw
+#   python train.py --config configs/vit_tiny.yaml --data-dir data/raw --val-dir data/valid
 # Notes:
 #   - Training reads existing .pt files from --data-dir.
 #   - In `data`, only img_size/horizon are directly consumed by training.
+#   - Non-224 `img_size` uses timm `dynamic_img_size`; H/W not divisible by the
+#     patch size are zero-padded in `VisualEncoderTimm` (e.g. 100 → 112 for patch 16).
 # =============================================================================
 
-project_name: "DiffusionTextGuide_Swin"
+project_name: "DiffusionTextGuide_ViTTiny"
 seed: 42
 
 data:
@@ -49,16 +50,16 @@ model:
   base_dim: 128
   time_embed_dim: 256
   image_feat_dim: 256
-  visual_backbone: swin_tiny
-  timm_model_name: swin_tiny_patch4_window7_224
-  timm_pretrained: true
+  visual_backbone: vit_tiny
+  timm_model_name: vit_tiny_patch16_224
+  timm_pretrained: false
 
 training:
   epochs: 5000
   batch_size: 128
   learning_rate: 0.00003
-  checkpoint_dir: "checkpoints/swin_pretrained"
-  model_name: "diffusion_textguide_swin.pt"
+  checkpoint_dir: "checkpoints/vit_tiny_pretrained"
+  model_name: "diffusion_textguide_vit_tiny.pt"
   log_interval: 1000
   use_amp: true
 
@@ -68,6 +69,6 @@ inference:
 # ── Ablation logging ──────────────────────────────────────────────────────────
 logging:
   val_loss_interval: 200      # compute held-out val loss every N epochs (cheap)
-  val_interval: 1000          # full metrics every N epochs (swin has fewer total epochs)
+  val_interval: 1000          # full metrics every N epochs
   val_max_samples: 50         # max val-terrain samples used for full metric computation
   log_dir: "logs/ablation"

@@ -2,7 +2,7 @@
 Text-conditioned Diffusion Path Model
 
 Architecture (from diffusion_patch, extended):
-  - Visual encoder: timm only — set `model.timm_model_name` in YAML (e.g. convnext_tiny / resnet18 / swin…); scratch = pretrained=False [B,2,H,W] → [B, visual_dim]
+  - Visual encoder: timm only — set `model.timm_model_name` in YAML (e.g. convnext_tiny / resnet18 / efficientnet_b0 / swin / vit…); scratch = pretrained=False [B,2,H,W] → [B, visual_dim]
   - TextEncoder:   Embedding + Transformer, [B,L] → [B, text_dim]
   - CrossAttention: path features attend to text embedding
   - ConditionalPathModel: 1-D U-Net with FiLM conditioning
@@ -27,7 +27,7 @@ def _require_timm_model_name(timm_model_name: Optional[str]) -> str:
     if not name:
         raise ValueError(
             "model.timm_model_name is required in the config (e.g. convnext_tiny, resnet18, "
-            "swin_tiny_patch4_window7_224)."
+            "efficientnet_b0, swin_tiny_patch4_window7_224, vit_tiny_patch16_224)."
         )
     return name
 
@@ -100,7 +100,7 @@ class ResnetBlock1D(nn.Module):
 # ============================================================================
 
 class VisualEncoderTimm(nn.Module):
-    """Generic timm visual encoder wrapper (e.g., ConvNeXt/Swin/ResNet)."""
+    """Generic timm visual encoder wrapper (e.g., ConvNeXt/EfficientNet/ResNet/Swin/ViT)."""
 
     def __init__(
         self,
@@ -121,15 +121,34 @@ class VisualEncoderTimm(nn.Module):
         # Set it from config so non-224 terrains (e.g., 100x100) are supported.
         if input_img_size is not None and "swin" in model_name.lower():
             create_kwargs["img_size"] = input_img_size
+        # ViT defaults to 224; enable flexible H×W (must be compatible with patch size).
+        if model_name.lower().startswith("vit_"):
+            create_kwargs["dynamic_img_size"] = True
         self.backbone = timm.create_model(
             model_name,
             **create_kwargs,
         )
+        self._vit_patch_hw: Optional[Tuple[int, int]] = None
+        if model_name.lower().startswith("vit_"):
+            pe = getattr(self.backbone, "patch_embed", None)
+            ps = getattr(pe, "patch_size", None) if pe is not None else None
+            if ps is not None:
+                if isinstance(ps, int):
+                    self._vit_patch_hw = (ps, ps)
+                else:
+                    self._vit_patch_hw = (int(ps[0]), int(ps[1]))
         in_features = self.backbone.num_features
         self.fc = nn.Linear(in_features, feature_dim)
         self.act = nn.SiLU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self._vit_patch_hw is not None:
+            ph, pw = self._vit_patch_hw
+            _, _, H, W = x.shape
+            pad_h = (ph - (H % ph)) % ph
+            pad_w = (pw - (W % pw)) % pw
+            if pad_h or pad_w:
+                x = F.pad(x, (0, pad_w, 0, pad_h))
         x = self.backbone(x)
         if x.dim() == 4:
             x = x.flatten(1)
@@ -251,7 +270,9 @@ class ConditionalPathModel(nn.Module):
                  horizon: int = 120, visual_dim: int = 256,
                  text_dim: int = 256, vocab_size: int = 200,
                  max_seq_len: int = 16,
-                 visual_backbone: Literal["convnext", "resnet", "swin_tiny"] = "convnext",
+                 visual_backbone: Literal[
+                     "convnext", "resnet", "efficientnet_b0", "swin_tiny", "vit_tiny"
+                 ] = "convnext",
                  visual_pretrained: bool = True,
                  timm_model_name: Optional[str] = None,
                  timm_pretrained: Optional[bool] = None,

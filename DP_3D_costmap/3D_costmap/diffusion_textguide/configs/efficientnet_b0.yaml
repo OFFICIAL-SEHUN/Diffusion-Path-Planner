@@ -1,0 +1,70 @@
+# =============================================================================
+# Text-guided diffusion — EfficientNet-B0 (timm)
+# =============================================================================
+# Usage:
+#   python train.py --config configs/efficientnet_b0.yaml --data-dir data/raw --val-dir data/valid
+# Notes:
+#   - Same encoder path as ResNet/ConvNeXt: `VisualEncoderTimm` + `timm_model_name`.
+#   - Set timm_pretrained: true for ImageNet init; false for scratch.
+#   - In `data`, only img_size/horizon are directly consumed by training.
+# =============================================================================
+
+project_name: "DiffusionTextGuide_EfficientNetB0"
+seed: 42
+
+data:
+  img_size: 100
+  horizon: 120
+
+  num_samples: 100
+  paths_per_terrain: 100
+  cost_weight: 50.0
+  min_distance_factor: 1.5
+
+gradient:
+  height_range: [0, 5]
+  terrain_scales: [[20,10],[10,5],[5,2]]
+  mass: 10.0
+  gravity: 9.8
+  limit_angle_deg: 25
+  pixel_resolution: 0.5
+  max_iterations: 20000
+
+intent:
+  cost_weights:
+    alpha: 0.5
+    beta: 1.8
+    gamma: 0.4
+    delta: 2.0
+  risk_threshold_deg: 15.0
+
+diffusion:
+  timesteps: 200
+  beta_start: 0.0001
+  beta_end: 0.02
+
+model:
+  base_dim: 64
+  time_embed_dim: 256
+  image_feat_dim: 256
+  visual_backbone: efficientnet_b0
+  timm_model_name: efficientnet_b0
+  timm_pretrained: false
+
+training:
+  epochs: 5000
+  batch_size: 128
+  learning_rate: 0.00003
+  checkpoint_dir: "checkpoints/efficientnet_b0"
+  model_name: "diffusion_textguide_efficientnet_b0.pt"
+  log_interval: 1000
+  use_amp: true
+
+inference:
+  show_progress: true
+
+logging:
+  val_loss_interval: 200
+  val_interval: 1000
+  val_max_samples: 50
+  log_dir: "logs/ablation"

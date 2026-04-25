@@ -57,11 +57,7 @@ training:
   epochs: 5000
   batch_size: 128
   learning_rate: 0.00003
-<<<<<<< Updated upstream
   checkpoint_dir: "checkpoints/swin_scratch"
-=======
-  checkpoint_dir: "checkpoints/swin_scratch"
->>>>>>> Stashed changes
   model_name: "diffusion_textguide_swin.pt"
   log_interval: 1000
   use_amp: true

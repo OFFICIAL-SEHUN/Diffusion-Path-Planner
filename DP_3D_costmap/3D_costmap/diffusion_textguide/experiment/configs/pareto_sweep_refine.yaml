@@ -9,7 +9,7 @@
 # Quick test: set terrain.num_terrains to 10–20 in this file.
 #
 # Run (from diffusion_textguide/):
-#   python -m experiment.eval_pareto \
+#   python -m experiment.evaluators.pareto \
 #       --config experiment/configs/pareto_sweep_refine.yaml \
 #       --output-dir results/pareto_refine
 # ─────────────────────────────────────────────────────────

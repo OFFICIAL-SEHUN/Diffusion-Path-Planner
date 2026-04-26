@@ -3,10 +3,10 @@
 그리드(행=epoch, 위에서부터 오래된 순; --epoch-step 배수만 사용, 열=intent)로 저장합니다.
 
 Usage (from diffusion_textguide/):
-python experiment/epoch_intent_grid.py \
+python -m experiment.visualization.epoch_intent_grid \
   --config configs/convnext.yaml \
   --checkpoint-dir checkpoints/convnext \
-  --output experiment/epoch_intent_grid_convnext_2k.png
+  --output results/epoch_intent_grid_convnext_2k.png
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-_ROOT = Path(__file__).resolve().parents[1]
+_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "scripts"))
 
@@ -186,7 +186,7 @@ def main():
     ap.add_argument(
         "--output",
         type=str,
-        default="experiment/epoch_intent_grid_convnext.png",
+        default="results/epoch_intent_grid_convnext.png",
     )
     ap.add_argument(
         "--epoch-step",

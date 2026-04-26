@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 _EXP_DIR = Path(__file__).resolve().parent
-_ROOT = _EXP_DIR.parent
+_ROOT = _EXP_DIR.parents[1]
 sys.path.insert(0, str(_ROOT))
 
 from model.network import ConditionalPathModel

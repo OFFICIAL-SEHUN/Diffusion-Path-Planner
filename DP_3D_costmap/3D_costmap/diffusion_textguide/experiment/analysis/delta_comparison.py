@@ -5,7 +5,7 @@ sweep_results.json을 읽고, α=2.0, β=1.5, γ=0.5 에서
 δ=0 (intent penalty 없음) vs δ=2 (balanced pick)의 per-intent 지표를 비교.
 
 Usage (from diffusion_textguide/):
-  python -m experiment.plot_delta_comparison \
+  python -m experiment.analysis.delta_comparison \
       --sweep results/pareto/sweep_results.json \
       --output-dir results/pareto/figures
 """
@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 import sys
-_ROOT = Path(__file__).resolve().parents[1]
+_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
 from scripts.generate_data import INTENT_CATALOG
 

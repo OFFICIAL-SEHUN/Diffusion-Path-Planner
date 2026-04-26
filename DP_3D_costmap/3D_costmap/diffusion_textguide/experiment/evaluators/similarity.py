@@ -14,13 +14,13 @@ Metrics (all require normalisation / same-horizon alignment):
   - Avoid-steep agreement
 
 Usage:
-  python -m experiment.eval_similarity \
+  python -m experiment.evaluators.similarity \
       --checkpoint checkpoints/final_model.pt \
       --data-dir data/raw \
       --output-dir results/similarity
 
   # Seen (train distribution) + unseen hold-out terrains (e.g. data/valid):
-  python -m experiment.eval_similarity \
+  python -m experiment.evaluators.similarity \
       --checkpoint checkpoints/final_model.pt \
       --data-dir data/raw \
       --unseen-data-dir data/valid \
@@ -43,12 +43,12 @@ from collections import defaultdict
 from tqdm import tqdm
 
 _EXP_DIR = Path(__file__).resolve().parent
-_ROOT = _EXP_DIR.parent
+_ROOT = _EXP_DIR.parents[1]
 sys.path.insert(0, str(_ROOT))
 
 from data_loader import text_to_tokens
-from experiment.utils import load_model, load_terrain
-from experiment.metrics import (
+from experiment.core.utils import load_model, load_terrain
+from experiment.core.metrics import (
     pointwise_l2,
     chamfer_distance,
     frechet_distance,

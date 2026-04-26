@@ -6,7 +6,7 @@
 # data/valid   — hold-out terrains; treat as unseen generalization.
 #
 # Run from diffusion_textguide/:
-#   python -m experiment.eval_similarity --checkpoint <ckpt> --data-dir data/raw \
+#   python -m experiment.evaluators.similarity --checkpoint <ckpt> --data-dir data/raw \
 #       --unseen-data-dir data/valid --run-both --output-dir results/similarity
 #
 # Outputs with --run-both:

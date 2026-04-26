@@ -15,12 +15,12 @@ weight configuration × intent.  Two complementary analyses:
     instruction floor, then minimize energy” rule for picking one default.
 
 Usage:
-  python -m experiment.eval_pareto \
+  python -m experiment.evaluators.pareto \
       --config experiment/configs/pareto_sweep.yaml \
       --output-dir results/pareto
 
   # Refined sweep (2nd stage, finer grid around prior best + higher caps)
-  python -m experiment.eval_pareto \
+  python -m experiment.evaluators.pareto \
       --config experiment/configs/pareto_sweep_refine.yaml \
       --output-dir results/pareto_refine
 """
@@ -40,7 +40,7 @@ from pathlib import Path
 from tqdm import tqdm
 
 _EXP_DIR = Path(__file__).resolve().parent
-_ROOT = _EXP_DIR.parent
+_ROOT = _EXP_DIR.parents[1]
 sys.path.insert(0, str(_ROOT))
 
 from scripts.generate_data import (
@@ -49,7 +49,7 @@ from scripts.generate_data import (
     _path_pixels_to_normalized,
     _resample_path,
 )
-from experiment.metrics import (
+from experiment.core.metrics import (
     cumulative_cot,
     risk_integral,
     mean_slope_along_path,

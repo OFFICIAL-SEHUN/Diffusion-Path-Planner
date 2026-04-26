@@ -20,6 +20,15 @@ from typing import Literal, Optional, Tuple
 
 import timm
 
+try:
+    from text_conditioning import normalize_text_encoder_type, uses_trainable_projection
+except ImportError:
+    def normalize_text_encoder_type(text_encoder_type: Optional[str]) -> str:
+        return text_encoder_type or "learnable"
+
+    def uses_trainable_projection(text_encoder_type: str) -> bool:
+        return False
+
 
 def _require_timm_model_name(timm_model_name: Optional[str]) -> str:
     """YAML must set `model.timm_model_name` (no code defaults)."""
@@ -260,7 +269,7 @@ class ConditionalPathModel(nn.Module):
 
     Conditioning:
       - costmap [B, 2, H, W]  → VisualEncoder → [B, 256]
-      - text_tokens [B, L]    → TextEncoder   → [B, 256]
+      - text condition         → [B, context_dim]
       - start_pos [B, 2]
       - goal_pos  [B, 2]
       - timestep  [B]
@@ -277,9 +286,14 @@ class ConditionalPathModel(nn.Module):
                  timm_model_name: Optional[str] = None,
                  timm_pretrained: Optional[bool] = None,
                  convnext_pretrained: Optional[bool] = None,
-                 input_img_size: Optional[int] = None):
+                 input_img_size: Optional[int] = None,
+                 text_encoder_type: str = "learnable",
+                 num_intents: int = 14,
+                 text_feature_dim: int = 256):
         super().__init__()
         time_dim = dim * 4
+        self.text_encoder_type = normalize_text_encoder_type(text_encoder_type)
+        self.text_dim = text_dim
 
         # Legacy support: older configs may still carry `convnext_pretrained`.
         base_pretrained = visual_pretrained if convnext_pretrained is None else convnext_pretrained
@@ -292,8 +306,30 @@ class ConditionalPathModel(nn.Module):
             model_name=backbone_name,
             input_img_size=input_img_size,
         )
-        self.text_encoder = TextEncoder(vocab_size=vocab_size, embed_dim=text_dim,
-                                        max_seq_len=max_seq_len)
+
+        self.text_encoder = None
+        self.intent_encoder = None
+        self.text_projection = None
+        text_context_dim = text_dim
+
+        if self.text_encoder_type == "learnable":
+            self.text_encoder = TextEncoder(vocab_size=vocab_size, embed_dim=text_dim,
+                                            max_seq_len=max_seq_len)
+        elif self.text_encoder_type == "onehot":
+            self.intent_encoder = nn.Embedding(num_intents, text_dim)
+        elif self.text_encoder_type == "no_text":
+            pass
+        elif self.text_encoder_type in {"clip", "clip_proj", "bert_proj", "t5_proj"}:
+            if uses_trainable_projection(self.text_encoder_type):
+                self.text_projection = nn.Sequential(
+                    nn.Linear(text_feature_dim, text_dim),
+                    nn.LayerNorm(text_dim),
+                )
+            else:
+                text_context_dim = text_feature_dim
+        else:
+            raise ValueError(f"Unsupported text_encoder_type: {self.text_encoder_type}")
+        self.text_context_dim = text_context_dim
 
         self.time_mlp = nn.Sequential(
             SinusoidalPositionEmbeddings(dim),
@@ -315,7 +351,7 @@ class ConditionalPathModel(nn.Module):
 
         # Bottleneck
         self.mid_block1 = ResnetBlock1D(dim * 4, dim * 4, time_cond_dim=global_cond_dim)
-        self.cross_attn = CrossAttention(query_dim=dim * 4, context_dim=text_dim)
+        self.cross_attn = CrossAttention(query_dim=dim * 4, context_dim=text_context_dim)
         self.mid_block2 = ResnetBlock1D(dim * 4, dim * 4, time_cond_dim=global_cond_dim)
 
         # Up
@@ -330,14 +366,18 @@ class ConditionalPathModel(nn.Module):
                 condition: torch.Tensor,
                 start_pos: Optional[torch.Tensor] = None,
                 goal_pos: Optional[torch.Tensor] = None,
-                text_tokens: Optional[torch.Tensor] = None) -> torch.Tensor:
+                text_tokens: Optional[torch.Tensor] = None,
+                intent_ids: Optional[torch.Tensor] = None,
+                text_features: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         x:           [B, Horizon, 2] noisy path
         time:        [B]
         condition:   [B, 2, H, W] costmap
         start_pos:   [B, 2]
         goal_pos:    [B, 2]
-        text_tokens: [B, L]
+        text_tokens:   [B, L] for learnable text encoder
+        intent_ids:    [B] for one-hot intent embedding
+        text_features: [B, D] for frozen CLIP/BERT/T5 features
         Returns:     [B, Horizon, 2] predicted noise
         """
         B = x.shape[0]
@@ -353,10 +393,16 @@ class ConditionalPathModel(nn.Module):
 
         global_cond = torch.cat([time_emb, visual_feat, start_pos, goal_pos], dim=-1)
 
-        if text_tokens is not None:
+        if self.text_encoder_type == "learnable" and text_tokens is not None and self.text_encoder is not None:
             text_emb = self.text_encoder(text_tokens)
+        elif self.text_encoder_type == "onehot" and intent_ids is not None and self.intent_encoder is not None:
+            text_emb = self.intent_encoder(intent_ids)
+        elif self.text_encoder_type in {"clip", "clip_proj", "bert_proj", "t5_proj"} and text_features is not None:
+            text_emb = text_features
+            if self.text_projection is not None:
+                text_emb = self.text_projection(text_emb)
         else:
-            text_emb = torch.zeros(B, self.text_encoder.ln.normalized_shape[0], device=device)
+            text_emb = torch.zeros(B, self.text_context_dim, device=device)
 
         # U-Net
         h = self.init_conv(x.permute(0, 2, 1)) + self.pos_embed

@@ -33,9 +33,15 @@ sys.path.insert(0, str(_ROOT))
 from model.network import ConditionalPathModel
 from model.diffusion import DiffusionScheduler
 from data_loader import TextGuideDataset, build_vocab, text_to_tokens
-from experiment.ablation_logger import AblationLogger
-from experiment.utils import load_terrain
-from experiment.metrics import compute_all_metrics
+from text_conditioning import (
+    DEFAULT_FEATURE_DIMS,
+    get_intent_to_id,
+    is_frozen_feature_encoder,
+    normalize_text_encoder_type,
+)
+from experiment.core.ablation_logger import AblationLogger
+from experiment.core.utils import load_terrain
+from experiment.core.metrics import compute_all_metrics
 
 
 def load_config(path: str) -> dict:
@@ -59,14 +65,57 @@ def save_checkpoint(model, optimizer, epoch, vocab, config, path, scaler=None):
     torch.save(payload, path)
 
 
+def _text_kwargs_from_batch(batch: dict, device: torch.device) -> dict:
+    kwargs = {}
+    if "tokens" in batch:
+        kwargs["text_tokens"] = batch["tokens"].to(device)
+    if "intent_id" in batch:
+        kwargs["intent_ids"] = batch["intent_id"].to(device)
+    if "text_feature" in batch:
+        kwargs["text_features"] = batch["text_feature"].to(device)
+    return kwargs
+
+
+def _make_text_kwargs_for_sample(
+    text_encoder_type: str,
+    instruction: str,
+    intent_type: str,
+    vocab: dict,
+    device: torch.device,
+    intent_to_id: dict,
+    feature_encoder: Optional[object],
+) -> dict:
+    text_encoder_type = normalize_text_encoder_type(text_encoder_type)
+    if text_encoder_type == "no_text":
+        return {}
+    if text_encoder_type == "onehot":
+        idx = intent_to_id.get(intent_type, intent_to_id.get("baseline", 0))
+        return {"intent_ids": torch.tensor([idx], dtype=torch.long, device=device)}
+    if is_frozen_feature_encoder(text_encoder_type):
+        if feature_encoder is None:
+            raise RuntimeError(f"{text_encoder_type} requires a FrozenTextFeatureEncoder")
+        return {"text_features": feature_encoder.encode([instruction]).to(device)}
+    tokens = text_to_tokens(instruction, vocab, max_seq_len=16).unsqueeze(0).to(device)
+    return {"text_tokens": tokens}
+
+
 @torch.no_grad()
 def visualize_sample(model, scheduler, dataset, epoch, device, out_dir):
     """학습 중 샘플링하여 시각화."""
     model.eval()
     idx = np.random.randint(len(dataset))
-    costmap, gt_path, tokens = dataset[idx]
+    sample = dataset[idx]
+    if isinstance(sample, dict):
+        costmap = sample["costmap"]
+        gt_path = sample["path"]
+        text_kwargs = _text_kwargs_from_batch(
+            {k: v.unsqueeze(0) for k, v in sample.items() if torch.is_tensor(v)},
+            device,
+        )
+    else:
+        costmap, gt_path, tokens = sample
+        text_kwargs = {"text_tokens": tokens.unsqueeze(0).to(device)}
     costmap = costmap.unsqueeze(0).to(device)
-    tokens = tokens.unsqueeze(0).to(device)
     gt_path = gt_path.numpy()
 
     start_pos = torch.tensor(gt_path[0], device=device).unsqueeze(0)
@@ -76,7 +125,8 @@ def visualize_sample(model, scheduler, dataset, epoch, device, out_dir):
     generated = scheduler.sample(
         model, costmap, shape=(1, horizon, 2),
         start_pos=start_pos, end_pos=goal_pos,
-        text_tokens=tokens, show_progress=False,
+        show_progress=False,
+        **text_kwargs,
     )
     gen_path = generated[0].cpu().numpy()
 
@@ -136,10 +186,16 @@ def compute_val_loss(
     model.eval()
     total_loss = 0.0
     n_batches = 0
-    for costmaps, paths, tokens in val_loader:
-        costmaps = costmaps.to(device)
-        paths = paths.to(device)
-        tokens = tokens.to(device)
+    for batch in val_loader:
+        if isinstance(batch, dict):
+            costmaps = batch["costmap"].to(device)
+            paths = batch["path"].to(device)
+            text_kwargs = _text_kwargs_from_batch(batch, device)
+        else:
+            costmaps, paths, tokens = batch
+            costmaps = costmaps.to(device)
+            paths = paths.to(device)
+            text_kwargs = {"text_tokens": tokens.to(device)}
         start_pos = paths[:, 0, :]
         goal_pos = paths[:, -1, :]
         B = paths.shape[0]
@@ -149,7 +205,7 @@ def compute_val_loss(
             pred_noise = model(
                 noisy_paths, t, costmaps,
                 start_pos=start_pos, goal_pos=goal_pos,
-                text_tokens=tokens,
+                **text_kwargs,
             )
             loss = F.mse_loss(pred_noise, noise)
         total_loss += loss.item()
@@ -167,6 +223,9 @@ def compute_full_val_metrics(
     device: torch.device,
     vocab: dict,
     max_samples: int = 50,
+    text_encoder_type: str = "learnable",
+    feature_encoder: Optional[object] = None,
+    intent_to_id: Optional[dict] = None,
 ) -> dict:
     """Run DDPM sampling on held-out terrain files and compute all metrics.
 
@@ -184,6 +243,8 @@ def compute_full_val_metrics(
     pixel_res = config.get("gradient", {}).get("pixel_resolution", 0.5)
     limit_deg = config.get("gradient", {}).get("limit_angle_deg", 25.0)
     risk_thresh = config.get("intent", {}).get("risk_threshold_deg", 15.0)
+    if intent_to_id is None:
+        intent_to_id = get_intent_to_id("train")
 
     isr_list: list[float] = []
     cot_list: list[float] = []
@@ -225,13 +286,16 @@ def compute_full_val_metrics(
             intent_type = intent_types[i] if i < len(intent_types) else "baseline"
             intent_params = intent_params_list[i] if i < len(intent_params_list) else {}
 
-            tokens = text_to_tokens(instr, vocab, max_seq_len=16).unsqueeze(0).to(device)
+            text_kwargs = _make_text_kwargs_for_sample(
+                text_encoder_type, instr, intent_type, vocab, device, intent_to_id, feature_encoder,
+            )
 
             t0 = time.perf_counter()
             gen_path_t = scheduler.sample(
                 model, costmap_t, shape=(1, horizon, 2),
                 start_pos=s_norm, end_pos=g_norm,
-                text_tokens=tokens, show_progress=False,
+                show_progress=False,
+                **text_kwargs,
             )
             elapsed = time.perf_counter() - t0
 
@@ -310,6 +374,22 @@ def train(
 
     horizon = d_cfg.get("horizon", 120)
     max_seq_len = 16
+    text_cfg = m_cfg.get("text_encoder", {})
+    text_encoder_type = normalize_text_encoder_type(
+        m_cfg.get("text_encoder_type", text_cfg.get("type", "learnable"))
+    )
+    text_model_name = text_cfg.get("model_name", m_cfg.get("text_model_name"))
+    text_feature_batch_size = int(text_cfg.get("batch_size", 64))
+    intent_to_id = get_intent_to_id("train")
+    feature_encoder = None
+    if is_frozen_feature_encoder(text_encoder_type):
+        from experiment.support.text_encoder_ablation import FrozenTextFeatureEncoder
+        feature_encoder = FrozenTextFeatureEncoder(
+            text_encoder_type,
+            model_name=text_model_name,
+            device=device,
+            batch_size=text_feature_batch_size,
+        )
 
     # ── Logging config ────────────────────────────────────────────────────────
     val_loss_interval = int(l_cfg.get("val_loss_interval", 200))
@@ -320,8 +400,12 @@ def train(
 
     # ── Datasets (train / val fully separated) ────────────────────────────────
     vocab = build_vocab()
-    train_dataset = TextGuideDataset(data_dir, max_seq_len=max_seq_len, vocab=vocab)
-    val_dataset   = TextGuideDataset(val_dir,  max_seq_len=max_seq_len, vocab=vocab)
+    train_dataset = TextGuideDataset(data_dir, max_seq_len=max_seq_len, vocab=vocab, return_metadata=True)
+    val_dataset = TextGuideDataset(val_dir, max_seq_len=max_seq_len, vocab=vocab, return_metadata=True)
+    if text_encoder_type != "learnable":
+        from experiment.support.text_encoder_ablation import TextEncoderAblationDataset
+        train_dataset = TextEncoderAblationDataset(train_dataset, text_encoder_type, feature_encoder)
+        val_dataset = TextEncoderAblationDataset(val_dataset, text_encoder_type, feature_encoder)
 
     # val .pt files are used for full metric computation (ISR/CoT/Risk/Latency)
     val_pt_files = sorted(Path(val_dir).glob("*.pt"))
@@ -331,6 +415,7 @@ def train(
     print(f"Train: {len(train_dataset)} samples from {data_dir}")
     print(f"Val  : {len(val_dataset)} samples from {val_dir} "
           f"({len(val_pt_files)} terrain files)")
+    print(f"Text encoder: {text_encoder_type}")
 
     batch_size = t_cfg.get("batch_size", 64)
     loader = DataLoader(
@@ -343,6 +428,13 @@ def train(
     )
 
     # ── Model ─────────────────────────────────────────────────────────────────
+    text_feature_dim = int(
+        getattr(train_dataset, "text_feature_dim", 0)
+        or DEFAULT_FEATURE_DIMS.get(text_encoder_type, 256)
+    )
+    m_cfg["text_encoder_type"] = text_encoder_type
+    m_cfg["text_feature_dim"] = text_feature_dim
+    m_cfg["num_intents"] = len(intent_to_id)
     model = ConditionalPathModel(
         transition_dim=2,
         dim=m_cfg.get("base_dim", 64),
@@ -356,6 +448,9 @@ def train(
         timm_model_name=m_cfg.get("timm_model_name"),
         timm_pretrained=m_cfg.get("timm_pretrained"),
         input_img_size=d_cfg.get("img_size"),
+        text_encoder_type=text_encoder_type,
+        num_intents=len(intent_to_id),
+        text_feature_dim=text_feature_dim,
     ).to(device)
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -375,6 +470,8 @@ def train(
 
     epochs = t_cfg.get("epochs", 5000)
     log_interval = t_cfg.get("log_interval", 1000)
+    max_train_batches = t_cfg.get("max_train_batches")
+    max_train_batches = int(max_train_batches) if max_train_batches is not None else None
     use_amp = t_cfg.get("use_amp", True) and device.type == "cuda"
     scaler = GradScaler(enabled=use_amp)
     ckpt_dir = str(_ROOT / t_cfg.get("checkpoint_dir", "checkpoints"))
@@ -432,6 +529,8 @@ def train(
 
     # ── Training loop ─────────────────────────────────────────────────────────
     print(f"\nTraining: {epochs} epochs, batch_size={batch_size}, lr={lr}")
+    if max_train_batches is not None:
+        print(f"Max train batches per epoch: {max_train_batches}")
     print(f"AMP (fp16): {'on' if use_amp else 'off'}")
     print(f"Checkpoint every {log_interval} epochs → {ckpt_dir}")
     print(f"Val loss every {val_loss_interval} epochs | "
@@ -456,10 +555,16 @@ def train(
         epoch_loss = 0.0
         n_batches = 0
 
-        for costmaps, paths, tokens in loader:
-            costmaps = costmaps.to(device)
-            paths = paths.to(device)
-            tokens = tokens.to(device)
+        for batch_idx, batch in enumerate(loader, start=1):
+            if isinstance(batch, dict):
+                costmaps = batch["costmap"].to(device)
+                paths = batch["path"].to(device)
+                text_kwargs = _text_kwargs_from_batch(batch, device)
+            else:
+                costmaps, paths, tokens = batch
+                costmaps = costmaps.to(device)
+                paths = paths.to(device)
+                text_kwargs = {"text_tokens": tokens.to(device)}
 
             start_pos = paths[:, 0, :]
             goal_pos = paths[:, -1, :]
@@ -473,7 +578,7 @@ def train(
                 pred_noise = model(
                     noisy_paths, t, costmaps,
                     start_pos=start_pos, goal_pos=goal_pos,
-                    text_tokens=tokens,
+                    **text_kwargs,
                 )
                 loss = F.mse_loss(pred_noise, noise)
 
@@ -491,6 +596,8 @@ def train(
             epoch_loss += loss.item()
             n_batches += 1
             global_step += 1
+            if max_train_batches is not None and batch_idx >= max_train_batches:
+                break
 
         avg_loss = epoch_loss / max(n_batches, 1)
         current_lr = optimizer.param_groups[0]["lr"]
@@ -541,6 +648,9 @@ def train(
             fm = compute_full_val_metrics(
                 model, scheduler, val_pt_files, config,
                 device, vocab, max_samples=val_max_samples,
+                text_encoder_type=text_encoder_type,
+                feature_encoder=feature_encoder,
+                intent_to_id=intent_to_id,
             )
             val_time_this_epoch += time.time() - _full_val_t
             logger.accumulate(

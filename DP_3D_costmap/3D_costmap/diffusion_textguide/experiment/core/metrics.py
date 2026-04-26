@@ -36,7 +36,7 @@ from typing import Dict, Optional, Tuple
 
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.generate_data import (
     _calculate_directional_cot,

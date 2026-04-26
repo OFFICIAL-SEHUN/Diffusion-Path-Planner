@@ -50,6 +50,8 @@ class DiffusionScheduler:
                start_pos: Optional[torch.Tensor] = None,
                end_pos: Optional[torch.Tensor] = None,
                text_tokens: Optional[torch.Tensor] = None,
+               intent_ids: Optional[torch.Tensor] = None,
+               text_features: Optional[torch.Tensor] = None,
                show_progress: bool = True) -> torch.Tensor:
         """DDPM reverse sampling with optional start/goal inpainting."""
         B = shape[0]
@@ -68,7 +70,9 @@ class DiffusionScheduler:
 
             eps_pred = model(x, t, condition,
                              start_pos=start_pos, goal_pos=end_pos,
-                             text_tokens=text_tokens)
+                             text_tokens=text_tokens,
+                             intent_ids=intent_ids,
+                             text_features=text_features)
 
             mean = (1.0 / alpha_t.sqrt()) * (
                 x - (beta_t / (1.0 - alpha_bar_t).sqrt()) * eps_pred

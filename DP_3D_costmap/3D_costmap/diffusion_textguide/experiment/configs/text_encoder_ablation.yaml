@@ -1,0 +1,37 @@
+base_config: configs/resnet.yaml
+data_dir: data/raw
+val_dir: data/valid
+device: cuda
+
+output_dir: results/text_encoder_ablation/resnet18_pretrained
+generated_config_dir: results/text_encoder_ablation/resnet18_pretrained/configs
+
+# =============================================================================
+#usage : python3 -m experiment.runners.text_encoder_ablation --config experiment/configs/text_encoder_ablation.yaml
+# Quick screening defaults. Override from CLI for longer final runs.
+epochs: 500
+batch_size: 128
+eval_max_samples: 50
+
+encoders:
+  - name: no_text
+    type: no_text
+
+  - name: onehot_intent
+    type: onehot
+
+  - name: frozen_clip
+    type: clip
+    model_name: openai/clip-vit-base-patch32
+
+  - name: frozen_clip_proj
+    type: clip_proj
+    model_name: openai/clip-vit-base-patch32
+
+  - name: frozen_bert_proj
+    type: bert_proj
+    model_name: bert-base-uncased
+
+  - name: frozen_t5_proj
+    type: t5_proj
+    model_name: t5-base

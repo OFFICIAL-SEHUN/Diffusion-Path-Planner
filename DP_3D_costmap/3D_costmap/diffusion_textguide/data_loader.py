@@ -54,11 +54,13 @@ class TextGuideDataset(Dataset):
     """Intent 기반 .pt 파일을 로드하여 flat (costmap, path, tokens) 샘플을 제공."""
 
     def __init__(self, data_dir: str, max_seq_len: int = 16,
-                 vocab: Optional[Dict[str, int]] = None):
+                 vocab: Optional[Dict[str, int]] = None,
+                 return_metadata: bool = False):
         self.data_dir = Path(data_dir)
         self.max_seq_len = max_seq_len
         self.vocab = vocab if vocab is not None else build_vocab()
         self.vocab_size = len(self.vocab)
+        self.return_metadata = return_metadata
 
         pt_files = sorted(self.data_dir.glob("*.pt"))
         if not pt_files:
@@ -86,18 +88,24 @@ class TextGuideDataset(Dataset):
         self.costmaps = []
         self.paths = []
         self.tokens = []
+        self.instructions = []
+        self.intent_types = []
 
         for data in raw_data:
             costmap = data["costmap"]                # [2, H, W]
             paths = data["paths"]                    # [N, horizon, 2]
             instructions = data.get("instructions", [])
+            intent_types = data.get("intent_types", [])
             n_paths = paths.shape[0]
 
             for i in range(n_paths):
                 self.costmaps.append(costmap)
                 self.paths.append(paths[i])
                 instr = instructions[i] if i < len(instructions) else ""
+                intent_type = intent_types[i] if i < len(intent_types) else "baseline"
                 self.tokens.append(text_to_tokens(instr, self.vocab, max_seq_len))
+                self.instructions.append(instr)
+                self.intent_types.append(intent_type)
 
         self.costmaps = torch.stack(self.costmaps)   # [N_total, 2, H, W]
         self.paths = torch.stack(self.paths)          # [N_total, horizon, 2]
@@ -110,4 +118,12 @@ class TextGuideDataset(Dataset):
         return self.paths.shape[0]
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if self.return_metadata:
+            return {
+                "costmap": self.costmaps[idx],
+                "path": self.paths[idx],
+                "tokens": self.tokens[idx],
+                "instruction": self.instructions[idx],
+                "intent_type": self.intent_types[idx],
+            }
         return self.costmaps[idx], self.paths[idx], self.tokens[idx]

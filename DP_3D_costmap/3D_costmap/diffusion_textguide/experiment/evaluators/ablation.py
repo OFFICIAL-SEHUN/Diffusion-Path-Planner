@@ -13,7 +13,7 @@ Metrics: goal_error, feasibility, ISR (overall + per-type),
          cumulative_cot, risk, avg/max slope, inference time.
 
 Usage:
-  python -m experiment.eval_ablation \
+  python -m experiment.evaluators.ablation \
       --checkpoint checkpoints/final_model.pt \
       --data-dir data/raw \
       --output-dir results/ablation
@@ -35,12 +35,12 @@ from collections import defaultdict
 from tqdm import tqdm
 
 _EXP_DIR = Path(__file__).resolve().parent
-_ROOT = _EXP_DIR.parent
+_ROOT = _EXP_DIR.parents[1]
 sys.path.insert(0, str(_ROOT))
 
 from data_loader import build_vocab, text_to_tokens
-from experiment.utils import load_model, load_terrain, run_inference_batch
-from experiment.metrics import compute_all_metrics, infeasible_rate
+from experiment.core.utils import load_model, load_terrain, run_inference_batch
+from experiment.core.metrics import compute_all_metrics, infeasible_rate
 
 
 # ── ablation wrappers ────────────────────────────────────────────────────────

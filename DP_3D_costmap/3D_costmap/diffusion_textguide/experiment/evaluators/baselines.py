@@ -12,7 +12,7 @@ Metrics: goal_error, path_length, cumulative_cot, mean/max slope,
          risk, ISR, infeasible_rate, inference_time.
 
 Usage:
-  python -m experiment.eval_baselines \
+  python -m experiment.evaluators.baselines \
       --checkpoint checkpoints/final_model.pt \
       --data-dir data/raw \
       --output-dir results/baselines
@@ -33,7 +33,7 @@ from collections import defaultdict
 from tqdm import tqdm
 
 _EXP_DIR = Path(__file__).resolve().parent
-_ROOT = _EXP_DIR.parent
+_ROOT = _EXP_DIR.parents[1]
 sys.path.insert(0, str(_ROOT))
 
 from scripts.generate_data import (
@@ -43,8 +43,8 @@ from scripts.generate_data import (
     _resample_path,
 )
 from data_loader import text_to_tokens
-from experiment.utils import load_model, load_terrain
-from experiment.metrics import compute_all_metrics
+from experiment.core.utils import load_model, load_terrain
+from experiment.core.metrics import compute_all_metrics
 
 
 # ── baseline definitions ─────────────────────────────────────────────────────

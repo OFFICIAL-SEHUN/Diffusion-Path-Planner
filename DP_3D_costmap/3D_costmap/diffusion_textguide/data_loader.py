@@ -2,21 +2,18 @@
 TextGuide Dataset & Vocabulary
 
 .pt 파일 (intent 포맷)에서 (costmap, path, text_tokens, start, goal)을 로드.
-INSTRUCTION_TEMPLATES로부터 word-level vocab을 자동 빌드.
+JSON instruction templates로부터 word-level vocab을 자동 빌드.
 """
 
-import os
 import torch
 from torch.utils.data import Dataset
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 
+from instruction_utils import load_instruction_templates
 
-# 여기서 generate_data.py의 templates를 가져옴
-try:
-    from scripts.generate_data import INSTRUCTION_TEMPLATES
-except ImportError:
-    INSTRUCTION_TEMPLATES = {}
+
+INSTRUCTION_TEMPLATES = load_instruction_templates("train")
 
 
 PAD_TOKEN = "<PAD>"

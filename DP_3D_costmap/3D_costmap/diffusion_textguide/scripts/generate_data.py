@@ -19,6 +19,7 @@ import os
 import heapq
 import argparse
 import random
+import sys
 import numpy as np
 import torch
 import yaml
@@ -32,112 +33,16 @@ random.seed(42)
 _SCRIPT_DIR = Path(__file__).resolve().parents[0]
 _ROOT = _SCRIPT_DIR.parent
 _DATA_RAW = _ROOT / "data" / "raw"
+sys.path.insert(0, str(_ROOT))
+
+from instruction_utils import load_instruction_templates
 
 
 # ============================================================================
 # Instruction Templates: pseudo label → 자연어 매핑
 # ============================================================================
 
-INSTRUCTION_TEMPLATES = {
-    "baseline": [
-        "Navigate along the default route",
-        "Follow a balanced path",
-        "Take the standard route",
-        "Go without any special constraints",
-        "Find an efficient path to the goal",
-    ],
-    "left_bias": [
-        "Stay to the left side",
-        "Follow the left corridor",
-        "Keep to the left as much as possible",
-        "Veer left on your way to the goal",
-        "Take the leftward path",
-    ],
-    "right_bias": [
-        "Stay to the right side",
-        "Follow the right corridor",
-        "Keep to the right as much as possible",
-        "Veer right on your way to the goal",
-        "Take the rightward path",
-    ],
-    "center_bias": [
-        "Stay close to the baseline route",
-        "Follow the center-aligned path",
-        "Keep near the middle route",
-        "Do not drift too far from the baseline path",
-        "Take a path close to the standard route",
-    ],
-    "avoid_steep": [
-        "Avoid steep slopes",
-        "Stay away from steep terrain",
-        "Bypass any high-gradient areas",
-        "Do not cross steep inclines",
-        "Route around the steepest sections",
-    ],
-    "prefer_flat": [
-        "Follow flat terrain",
-        "Prefer gentle slopes",
-        "Stick to the flattest ground possible",
-        "Choose the most level path available",
-        "Stay on the smoothest terrain you can find",
-    ],
-    "minimize_elevation_change": [
-        "Minimize elevation changes along the way",
-        "Take a route with as little height change as possible",
-        "Avoid unnecessary ups and downs",
-        "Follow a path with minimal elevation variation",
-        "Keep the altitude changes as small as possible",
-    ],
-    "short_path": [
-        "Take the shortest route possible",
-        "Use the most direct path to the goal",
-        "Keep the route as short as you can",
-        "Choose the most direct way forward",
-        "Minimize the travel distance",
-    ],
-    "energy_efficient": [
-        "Choose the most energy-efficient route",
-        "Minimize traversal effort on the way to the goal",
-        "Follow a path that uses the least energy",
-        "Take the most efficient route in terms of effort",
-        "Reduce the energy cost as much as possible",
-    ],
-    "left_bias+avoid_steep": [
-        "Stay left and avoid steep areas",
-        "Keep to the left while bypassing steep slopes",
-        "Veer left but steer clear of high gradients",
-        "Follow the left side and route around steep terrain",
-        "Take a leftward path that avoids steep sections",
-    ],
-    "right_bias+prefer_flat": [
-        "Stay right and follow flat terrain",
-        "Keep to the right along gentle slopes",
-        "Veer right while preferring level ground",
-        "Take the rightward path on the flattest terrain",
-        "Follow the right side while staying on smooth ground",
-    ],
-    "center_bias+prefer_flat": [
-        "Stay near the baseline route and follow flat terrain",
-        "Keep close to the standard path while preferring gentle slopes",
-        "Take a center-aligned route over level ground",
-        "Follow the baseline direction on the flattest terrain",
-        "Stay near the middle route while keeping to smooth ground",
-    ],
-    "short_path+avoid_steep": [
-        "Take a short route while avoiding steep areas",
-        "Choose the most direct path that avoids steep slopes",
-        "Keep the path short but stay away from steep terrain",
-        "Find a compact route around steep sections",
-        "Minimize distance without crossing steep areas",
-    ],
-    "energy_efficient+minimize_elevation_change": [
-        "Choose an energy-efficient route with minimal elevation change",
-        "Minimize effort while avoiding unnecessary ups and downs",
-        "Take a low-energy path with as little height variation as possible",
-        "Follow the most efficient route while keeping elevation changes small",
-        "Reduce energy cost and keep the route as smooth in height as possible",
-    ],
-}
+INSTRUCTION_TEMPLATES = load_instruction_templates("train")
 
 
 def _sample_instruction(intent_type):

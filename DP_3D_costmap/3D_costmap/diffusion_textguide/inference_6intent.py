@@ -24,7 +24,11 @@ sys.path.insert(0, str(_ROOT))
 from model.network import ConditionalPathModel
 from model.diffusion import DiffusionScheduler
 from data_loader import text_to_tokens
-from scripts.generate_data import INTENT_CATALOG, INSTRUCTION_TEMPLATES
+from instruction_utils import load_instruction_templates
+from scripts.generate_data import INTENT_CATALOG
+
+
+INSTRUCTION_TEMPLATES = load_instruction_templates("train")
 
 
 def _first_instruction(itype: str) -> str:

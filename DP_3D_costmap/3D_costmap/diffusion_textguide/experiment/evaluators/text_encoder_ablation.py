@@ -150,6 +150,40 @@ def _aggregate(rows: list[dict]) -> dict:
     }
 
 
+def _build_intent_balanced_refs(pt_files: list[Path], max_samples: int) -> list[tuple[str, int, str]]:
+    """Create near-uniform eval refs via round-robin over intent buckets."""
+    by_intent = defaultdict(list)
+    for pt_path in pt_files:
+        terrain = load_terrain(str(pt_path))
+        paths = terrain["paths"]
+        intent_types = terrain.get("intent_types", [])
+        for i in range(paths.shape[0]):
+            intent_type = intent_types[i] if i < len(intent_types) else "baseline"
+            by_intent[intent_type].append((str(pt_path), i, intent_type))
+
+    if not by_intent:
+        return []
+
+    ordered_intents = sorted(by_intent.keys())
+    cursors = {intent: 0 for intent in ordered_intents}
+    refs: list[tuple[str, int, str]] = []
+
+    while len(refs) < max_samples:
+        progressed = False
+        for intent in ordered_intents:
+            idx = cursors[intent]
+            samples = by_intent[intent]
+            if idx < len(samples):
+                refs.append(samples[idx])
+                cursors[intent] = idx + 1
+                progressed = True
+                if len(refs) >= max_samples:
+                    break
+        if not progressed:
+            break
+    return refs
+
+
 @torch.no_grad()
 def evaluate(args):
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
@@ -181,11 +215,13 @@ def evaluate(args):
     rows_unseen = []
 
     pt_files = sorted(_resolve_path(args.data_dir).glob("*.pt"))
-    n_seen = 0
-    for pt_path in pt_files:
-        if n_seen >= args.max_samples:
-            break
-        terrain = load_terrain(str(pt_path))
+    refs = _build_intent_balanced_refs(pt_files, args.max_samples)
+    terrain_cache: dict[str, dict] = {}
+    for n_seen, (pt_path_str, i, intent_type) in enumerate(refs, start=1):
+        terrain = terrain_cache.get(pt_path_str)
+        if terrain is None:
+            terrain = load_terrain(pt_path_str)
+            terrain_cache[pt_path_str] = terrain
         paths = terrain["paths"]
         instructions = terrain.get("instructions", [])
         intent_types = terrain.get("intent_types", [])
@@ -204,59 +240,55 @@ def evaluate(args):
             dtype=torch.float32, device=device,
         ).unsqueeze(0)
 
-        for i in range(paths.shape[0]):
-            if n_seen >= args.max_samples:
-                break
-            intent_type = intent_types[i] if i < len(intent_types) else "baseline"
-            intent_params = intent_params_list[i] if i < len(intent_params_list) else {}
-            seen_instruction = instructions[i] if i < len(instructions) else intent_type
-            valid_list = unseen_templates.get(intent_type, [seen_instruction])
-            unseen_instruction = valid_list[i % len(valid_list)]
+        intent_type = intent_types[i] if i < len(intent_types) else intent_type
+        intent_params = intent_params_list[i] if i < len(intent_params_list) else {}
+        seen_instruction = instructions[i] if i < len(instructions) else intent_type
+        valid_list = unseen_templates.get(intent_type, [seen_instruction])
+        unseen_instruction = valid_list[i % len(valid_list)]
 
-            for split, instruction, bucket in (
-                ("seen", seen_instruction, rows_seen),
-                ("unseen", unseen_instruction, rows_unseen),
-            ):
-                kwargs = _text_kwargs(
-                    text_encoder_type, instruction, intent_type, vocab,
-                    device, intent_to_id, feature_encoder,
-                )
-                t0 = time.perf_counter()
-                gen = scheduler.sample(
-                    model, costmap_t, shape=(1, horizon, 2),
-                    start_pos=s_norm, end_pos=g_norm,
-                    show_progress=False,
-                    **kwargs,
-                )[0].cpu().numpy()
-                latency = time.perf_counter() - t0
+        for split, instruction, bucket in (
+            ("seen", seen_instruction, rows_seen),
+            ("unseen", unseen_instruction, rows_unseen),
+        ):
+            kwargs = _text_kwargs(
+                text_encoder_type, instruction, intent_type, vocab,
+                device, intent_to_id, feature_encoder,
+            )
+            t0 = time.perf_counter()
+            gen = scheduler.sample(
+                model, costmap_t, shape=(1, horizon, 2),
+                start_pos=s_norm, end_pos=g_norm,
+                show_progress=False,
+                **kwargs,
+            )[0].cpu().numpy()
+            latency = time.perf_counter() - t0
 
-                m = compute_all_metrics(
-                    path_norm=gen,
-                    goal_norm=g_norm[0].cpu().numpy(),
-                    slope_map_deg=terrain["slope_map"],
-                    height_map=terrain["height_map"],
-                    img_size=t_img_size,
-                    intent_type=intent_type,
-                    intent_params=intent_params,
-                    start_pos=start,
-                    goal_pos=goal,
-                    ref_path_norm=paths[i],
-                    pixel_resolution=float(terrain.get("pixel_resolution", pixel_res)),
-                    limit_angle_deg=float(terrain.get("limit_angle_deg", limit_deg)),
-                    risk_threshold_deg=float(terrain.get("risk_threshold_deg", risk_thresh)),
-                    alpha=cw.get("alpha", 1.0),
-                    beta=cw.get("beta", 0.8),
-                    gamma=cw.get("gamma", 0.1),
-                    delta=cw.get("delta", 1.0),
-                )
-                m.update({
-                    "split": split,
-                    "intent_type": intent_type,
-                    "instruction": instruction,
-                    "latency_s": latency,
-                })
-                bucket.append(m)
-            n_seen += 1
+            m = compute_all_metrics(
+                path_norm=gen,
+                goal_norm=g_norm[0].cpu().numpy(),
+                slope_map_deg=terrain["slope_map"],
+                height_map=terrain["height_map"],
+                img_size=t_img_size,
+                intent_type=intent_type,
+                intent_params=intent_params,
+                start_pos=start,
+                goal_pos=goal,
+                ref_path_norm=paths[i],
+                pixel_resolution=float(terrain.get("pixel_resolution", pixel_res)),
+                limit_angle_deg=float(terrain.get("limit_angle_deg", limit_deg)),
+                risk_threshold_deg=float(terrain.get("risk_threshold_deg", risk_thresh)),
+                alpha=cw.get("alpha", 1.0),
+                beta=cw.get("beta", 0.8),
+                gamma=cw.get("gamma", 0.1),
+                delta=cw.get("delta", 1.0),
+            )
+            m.update({
+                "split": split,
+                "intent_type": intent_type,
+                "instruction": instruction,
+                "latency_s": latency,
+            })
+            bucket.append(m)
 
     summary = {
         "checkpoint": str(_resolve_path(args.checkpoint)),

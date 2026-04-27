@@ -1,11 +1,11 @@
 torch
 torchvision
 timm>=1.0.0
-numpy
+numpy<2
 matplotlib
 scipy
 tqdm
 pyyaml
-transformers
+transformers==4.48.3
 wandb
 timm

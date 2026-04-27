@@ -49,7 +49,7 @@ model:
   image_feat_dim: 256
   visual_backbone: efficientnet_b0
   timm_model_name: efficientnet_b0
-  timm_pretrained: false
+  timm_pretrained: true
 
 training:
   epochs: 5000

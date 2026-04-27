@@ -510,9 +510,10 @@ def train(
     use_wandb = False
     try:
         import wandb
+        wandb_run_name = f"{config.get('project_name', backbone_name)}_{time.strftime('%m%d_%H%M')}"
         run = wandb.init(
             project="diffusion-textguide",
-            name=f"{backbone_name}_{time.strftime('%m%d_%H%M')}",
+            name=wandb_run_name,
             config=config,
         )
         use_wandb = run is not None and hasattr(wandb, "log")

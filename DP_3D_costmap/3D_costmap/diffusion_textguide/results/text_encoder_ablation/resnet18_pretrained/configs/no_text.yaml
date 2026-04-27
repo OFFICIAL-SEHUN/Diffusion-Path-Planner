@@ -57,7 +57,7 @@ training:
 inference:
   show_progress: true
 logging:
-  val_loss_interval: 200
-  val_interval: 1000
+  val_loss_interval: 100
+  val_interval: 100
   val_max_samples: 50
   log_dir: logs/text_encoder_ablation/resnet18_pretrained/no_text

@@ -11,6 +11,8 @@ generated_config_dir: results/text_encoder_ablation/resnet18_pretrained/configs
 # Quick screening defaults. Override from CLI for longer final runs.
 epochs: 500
 batch_size: 128
+val_loss_interval: 100
+val_interval: 100
 eval_max_samples: 50
 
 encoders:

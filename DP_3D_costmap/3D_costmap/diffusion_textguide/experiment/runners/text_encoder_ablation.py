@@ -67,6 +67,8 @@ def main():
     epochs = args.epochs or sweep_cfg.get("epochs")
     batch_size = args.batch_size or sweep_cfg.get("batch_size")
     eval_max_samples = int(sweep_cfg.get("eval_max_samples", 50))
+    val_loss_interval = sweep_cfg.get("val_loss_interval")
+    val_interval = sweep_cfg.get("val_interval")
 
     selected = set(args.encoders) if args.encoders else None
     encoders = [e for e in sweep_cfg["encoders"] if selected is None or e["name"] in selected]
@@ -98,7 +100,13 @@ def main():
             cfg["training"]["batch_size"] = int(batch_size)
         if args.max_train_batches is not None:
             cfg["training"]["max_train_batches"] = int(args.max_train_batches)
-        cfg.setdefault("logging", {})["log_dir"] = str(
+        logging_cfg = cfg.setdefault("logging", {})
+        if val_loss_interval is not None:
+            logging_cfg["val_loss_interval"] = int(val_loss_interval)
+        if val_interval is not None:
+            logging_cfg["val_interval"] = int(val_interval)
+        logging_cfg["val_max_samples"] = eval_max_samples
+        logging_cfg["log_dir"] = str(
             Path("logs") / "text_encoder_ablation" / run_group / name
         )
 

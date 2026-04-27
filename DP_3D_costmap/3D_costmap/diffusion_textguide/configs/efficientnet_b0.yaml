@@ -67,4 +67,4 @@ logging:
   val_loss_interval: 200
   val_interval: 1000
   val_max_samples: 50
-  log_dir: "logs/ablation"
+  log_dir: "logs/backbone_ablation"

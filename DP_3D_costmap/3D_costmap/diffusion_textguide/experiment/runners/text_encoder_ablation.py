@@ -28,8 +28,10 @@ def _load_yaml(path: Path) -> dict:
 
 def _write_yaml(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
+    tmp_path = path.with_name(f".{path.name}.tmp")
+    with tmp_path.open("w", encoding="utf-8") as f:
         yaml.safe_dump(payload, f, sort_keys=False)
+    tmp_path.replace(path)
 
 
 def _run(cmd: list[str], dry_run: bool) -> None:
@@ -66,7 +68,26 @@ def main():
     device = args.device or sweep_cfg.get("device", "cuda")
     epochs = args.epochs or sweep_cfg.get("epochs")
     batch_size = args.batch_size or sweep_cfg.get("batch_size")
-    eval_max_samples = int(sweep_cfg.get("eval_max_samples", 50))
+    train_val_max_samples = sweep_cfg.get("train_val_max_samples")
+    train_val_max_samples = (
+        int(train_val_max_samples) if train_val_max_samples is not None else None
+    )
+    train_val_samples_per_intent = sweep_cfg.get("train_val_samples_per_intent")
+    train_val_samples_per_intent = (
+        int(train_val_samples_per_intent)
+        if train_val_samples_per_intent is not None
+        else None
+    )
+    train_val_seed = int(sweep_cfg.get("train_val_seed", sweep_cfg.get("eval_seed", 42)))
+    train_val_num_seeds = int(sweep_cfg.get("train_val_num_seeds", 1))
+    eval_max_samples = sweep_cfg.get("eval_max_samples")
+    eval_max_samples = int(eval_max_samples) if eval_max_samples is not None else None
+    eval_samples_per_intent = sweep_cfg.get("eval_samples_per_intent")
+    eval_samples_per_intent = (
+        int(eval_samples_per_intent) if eval_samples_per_intent is not None else None
+    )
+    eval_seed = int(sweep_cfg.get("eval_seed", 42))
+    eval_num_seeds = int(sweep_cfg.get("eval_num_seeds", 1))
     val_loss_interval = sweep_cfg.get("val_loss_interval")
     val_interval = sweep_cfg.get("val_interval")
 
@@ -84,6 +105,8 @@ def main():
         encoder_type = encoder["type"]
         cfg = copy.deepcopy(base_cfg)
         cfg["project_name"] = f"{cfg.get('project_name', 'DiffusionTextGuide')}_{name}"
+        if sweep_cfg.get("wandb") is not None:
+            cfg["wandb"] = copy.deepcopy(sweep_cfg["wandb"])
         cfg.setdefault("model", {})["text_encoder_type"] = encoder_type
         cfg["model"]["text_encoder"] = {
             "type": encoder_type,
@@ -105,7 +128,12 @@ def main():
             logging_cfg["val_loss_interval"] = int(val_loss_interval)
         if val_interval is not None:
             logging_cfg["val_interval"] = int(val_interval)
-        logging_cfg["val_max_samples"] = eval_max_samples
+        if train_val_samples_per_intent is not None:
+            logging_cfg["val_samples_per_intent"] = train_val_samples_per_intent
+        if train_val_max_samples is not None:
+            logging_cfg["val_max_samples"] = train_val_max_samples
+        logging_cfg["val_seed"] = train_val_seed
+        logging_cfg["val_num_seeds"] = train_val_num_seeds
         logging_cfg["log_dir"] = str(
             Path("logs") / "text_encoder_ablation" / run_group / name
         )
@@ -126,14 +154,20 @@ def main():
             ], args.dry_run)
 
         if not args.skip_eval:
-            _run([
+            eval_cmd = [
                 sys.executable, "-m", "experiment.evaluators.text_encoder_ablation",
                 "--checkpoint", str(ckpt),
                 "--data-dir", val_dir,
                 "--output", str(eval_out),
                 "--device", device,
-                "--max-samples", str(eval_max_samples),
-            ], args.dry_run)
+                "--seed", str(eval_seed),
+                "--num-seeds", str(eval_num_seeds),
+            ]
+            if eval_samples_per_intent is not None:
+                eval_cmd.extend(["--samples-per-intent", str(eval_samples_per_intent)])
+            elif eval_max_samples is not None:
+                eval_cmd.extend(["--max-samples", str(eval_max_samples)])
+            _run(eval_cmd, args.dry_run)
 
             if eval_out.exists():
                 with eval_out.open("r", encoding="utf-8") as f:
@@ -148,8 +182,14 @@ def main():
                     "composite_isr": data["seen"]["composite_isr"],
                     "composite_isr_std": data["seen"].get("composite_isr_std"),
                     "worst_isr": data["seen"]["worst_isr"],
+                    "worst_isr_intent": data["seen"].get("worst_isr_intent"),
+                    "teacher_worst_isr": data["seen"].get("teacher_worst_isr"),
+                    "mean_isr_vs_teacher": data["seen"].get("mean_isr_vs_teacher"),
+                    "worst_isr_vs_teacher": data["seen"].get("worst_isr_vs_teacher"),
+                    "worst_isr_vs_teacher_intent": data["seen"].get("worst_isr_vs_teacher_intent"),
                     "unseen_isr": data["unseen"]["mean_isr"],
                     "unseen_isr_std": data["unseen"].get("mean_isr_std"),
+                    "unseen_isr_vs_teacher": data["unseen"].get("mean_isr_vs_teacher"),
                     "cot": data["seen"]["cot"],
                     "cot_std": data["seen"].get("cot_std"),
                     "risk": data["seen"]["risk"],
@@ -160,6 +200,11 @@ def main():
                     "latency_s_std": data["seen"].get("latency_s_std"),
                     "n_seen": data["seen"]["n"],
                     "n_unseen": data["unseen"]["n"],
+                    "n_refs": data.get("eval_sampling", {}).get("n_refs"),
+                    "n_terrains": data.get("eval_sampling", {}).get("n_terrains"),
+                    "samples_per_intent": data.get("eval_sampling", {}).get("samples_per_intent"),
+                    "eval_seed": data.get("eval_sampling", {}).get("seed"),
+                    "eval_num_seeds": data.get("eval_sampling", {}).get("num_seeds"),
                 })
 
     if summaries:

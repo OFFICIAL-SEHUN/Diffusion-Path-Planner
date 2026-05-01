@@ -13,6 +13,7 @@ import os
 import sys
 import argparse
 import time
+from collections import defaultdict
 from typing import Optional
 import yaml
 import numpy as np
@@ -214,6 +215,68 @@ def compute_val_loss(
     return total_loss / max(n_batches, 1)
 
 
+def _optional_int(value) -> Optional[int]:
+    return None if value is None else int(value)
+
+
+def _build_intent_balanced_refs(
+    pt_files: list[Path],
+    max_samples: Optional[int] = None,
+    samples_per_intent: Optional[int] = None,
+    seed: int = 42,
+) -> list[tuple[str, int, str]]:
+    """Create validation refs without biasing toward early terrain files."""
+    by_intent = defaultdict(list)
+    for pt_path in pt_files:
+        terrain = load_terrain(str(pt_path))
+        paths = terrain["paths"]
+        intent_types = terrain.get("intent_types", [])
+        for i in range(paths.shape[0]):
+            intent_type = intent_types[i] if i < len(intent_types) else "baseline"
+            by_intent[intent_type].append((str(pt_path), i, intent_type))
+
+    if not by_intent:
+        return []
+
+    rng = np.random.default_rng(seed)
+    ordered_intents = sorted(by_intent.keys())
+    for intent in ordered_intents:
+        rng.shuffle(by_intent[intent])
+
+    if samples_per_intent is not None:
+        refs = []
+        for intent in ordered_intents:
+            refs.extend(by_intent[intent][:samples_per_intent])
+        rng.shuffle(refs)
+        return refs
+
+    if max_samples is None:
+        max_samples = sum(len(v) for v in by_intent.values())
+
+    cursors = {intent: 0 for intent in ordered_intents}
+    refs: list[tuple[str, int, str]] = []
+    while len(refs) < max_samples:
+        progressed = False
+        for intent in ordered_intents:
+            idx = cursors[intent]
+            samples = by_intent[intent]
+            if idx < len(samples):
+                refs.append(samples[idx])
+                cursors[intent] = idx + 1
+                progressed = True
+                if len(refs) >= max_samples:
+                    break
+        if not progressed:
+            break
+    return refs
+
+
+def _set_sampling_seed(seed: int, device: torch.device) -> None:
+    torch.manual_seed(seed)
+    if device.type == "cuda":
+        torch.cuda.manual_seed_all(seed)
+
+
 @torch.no_grad()
 def compute_full_val_metrics(
     model: ConditionalPathModel,
@@ -222,7 +285,10 @@ def compute_full_val_metrics(
     config: dict,
     device: torch.device,
     vocab: dict,
-    max_samples: int = 50,
+    max_samples: Optional[int] = None,
+    samples_per_intent: Optional[int] = None,
+    seed: int = 42,
+    num_seeds: int = 1,
     text_encoder_type: str = "learnable",
     feature_encoder: Optional[object] = None,
     intent_to_id: Optional[dict] = None,
@@ -236,7 +302,6 @@ def compute_full_val_metrics(
     model.eval()
 
     d_cfg = config.get("data", {})
-    diff_cfg = config.get("diffusion", {})
     cw = config.get("intent", {}).get("cost_weights", {})
     horizon = d_cfg.get("horizon", 120)
     img_size = d_cfg.get("img_size", 100)
@@ -252,12 +317,20 @@ def compute_full_val_metrics(
     latency_list: list[float] = []
     per_intent: dict[str, list[float]] = {}
 
-    n_collected = 0
-    for pt_path in val_pt_files:
-        if n_collected >= max_samples:
-            break
+    refs = _build_intent_balanced_refs(
+        val_pt_files,
+        max_samples=max_samples,
+        samples_per_intent=samples_per_intent,
+        seed=seed,
+    )
+    terrain_cache: dict[str, dict] = {}
+
+    for ref_idx, (pt_path_str, i, ref_intent_type) in enumerate(refs, start=1):
         try:
-            t_data = load_terrain(str(pt_path))
+            t_data = terrain_cache.get(pt_path_str)
+            if t_data is None:
+                t_data = load_terrain(pt_path_str)
+                terrain_cache[pt_path_str] = t_data
         except Exception:
             continue
 
@@ -281,14 +354,40 @@ def compute_full_val_metrics(
             dtype=torch.float32,
         ).unsqueeze(0).to(device)
 
-        for i in range(min(paths_arr.shape[0], max_samples - n_collected)):
-            instr = instructions[i] if i < len(instructions) else ""
-            intent_type = intent_types[i] if i < len(intent_types) else "baseline"
-            intent_params = intent_params_list[i] if i < len(intent_params_list) else {}
+        instr = instructions[i] if i < len(instructions) else ""
+        intent_type = intent_types[i] if i < len(intent_types) else ref_intent_type
+        intent_params = intent_params_list[i] if i < len(intent_params_list) else {}
+        baseline_path = None
+        if "baseline" in intent_types:
+            baseline_path = paths_arr[intent_types.index("baseline")]
 
-            text_kwargs = _make_text_kwargs_for_sample(
-                text_encoder_type, instr, intent_type, vocab, device, intent_to_id, feature_encoder,
-            )
+        text_kwargs = _make_text_kwargs_for_sample(
+            text_encoder_type, instr, intent_type, vocab, device, intent_to_id, feature_encoder,
+        )
+
+        metric_kwargs = dict(
+            goal_norm=g_norm[0].cpu().numpy(),
+            slope_map_deg=slope_map_deg,
+            height_map=height_map,
+            img_size=t_img_size,
+            intent_type=intent_type,
+            intent_params=intent_params,
+            start_pos=start,
+            goal_pos=goal,
+            ref_path_norm=paths_arr[i],
+            baseline_path_norm=baseline_path,
+            pixel_resolution=float(t_data.get("pixel_resolution", pixel_res)),
+            limit_angle_deg=float(t_data.get("limit_angle_deg", limit_deg)),
+            risk_threshold_deg=float(t_data.get("risk_threshold_deg", risk_thresh)),
+            alpha=cw.get("alpha", 1.0),
+            beta=cw.get("beta", 0.8),
+            gamma=cw.get("gamma", 0.1),
+            delta=cw.get("delta", 1.0),
+        )
+
+        for seed_idx in range(num_seeds):
+            sample_seed = int(seed + seed_idx * 1_000_003 + ref_idx)
+            _set_sampling_seed(sample_seed, device)
 
             t0 = time.perf_counter()
             gen_path_t = scheduler.sample(
@@ -300,26 +399,11 @@ def compute_full_val_metrics(
             elapsed = time.perf_counter() - t0
 
             gen_path = gen_path_t[0].cpu().numpy()
-            goal_norm_np = g_norm[0].cpu().numpy()
 
             try:
                 m = compute_all_metrics(
                     path_norm=gen_path,
-                    goal_norm=goal_norm_np,
-                    slope_map_deg=slope_map_deg,
-                    height_map=height_map,
-                    img_size=t_img_size,
-                    intent_type=intent_type,
-                    intent_params=intent_params,
-                    start_pos=start,
-                    goal_pos=goal,
-                    pixel_resolution=float(t_data.get("pixel_resolution", pixel_res)),
-                    limit_angle_deg=float(t_data.get("limit_angle_deg", limit_deg)),
-                    risk_threshold_deg=float(t_data.get("risk_threshold_deg", risk_thresh)),
-                    alpha=cw.get("alpha", 1.0),
-                    beta=cw.get("beta", 0.8),
-                    gamma=cw.get("gamma", 0.1),
-                    delta=cw.get("delta", 1.0),
+                    **metric_kwargs,
                 )
             except Exception:
                 continue
@@ -330,7 +414,6 @@ def compute_full_val_metrics(
             latency_list.append(elapsed)
 
             per_intent.setdefault(intent_type, []).append(m.get("isr", float("nan")))
-            n_collected += 1
 
     def _safe_mean(lst: list) -> float:
         clean = [v for v in lst if not (v != v)]  # filter NaN
@@ -350,6 +433,11 @@ def compute_full_val_metrics(
         "inference_latency_s": _safe_mean(latency_list),
         "max_risk": _safe_max(risk_list),
         "isr_per_intent": isr_per_intent_mean,
+        "n_refs": len(refs),
+        "n_terrains": len({Path(r[0]).stem for r in refs}),
+        "max_samples": max_samples,
+        "samples_per_intent": samples_per_intent,
+        "num_seeds": num_seeds,
     }
 
 
@@ -394,7 +482,10 @@ def train(
     # ── Logging config ────────────────────────────────────────────────────────
     val_loss_interval = int(l_cfg.get("val_loss_interval", 200))
     val_interval = int(l_cfg.get("val_interval", 2000))
-    val_max_samples = int(l_cfg.get("val_max_samples", 50))
+    val_max_samples = _optional_int(l_cfg.get("val_max_samples"))
+    val_samples_per_intent = _optional_int(l_cfg.get("val_samples_per_intent"))
+    val_seed = int(l_cfg.get("val_seed", config.get("seed", 42)))
+    val_num_seeds = int(l_cfg.get("val_num_seeds", 1))
     log_dir = str(_ROOT / l_cfg.get("log_dir", "logs/ablation"))
     backbone_name = m_cfg.get("visual_backbone", "unknown")
 
@@ -510,9 +601,12 @@ def train(
     use_wandb = False
     try:
         import wandb
+        wandb_cfg = config.get("wandb", {}) or {}
         wandb_run_name = f"{config.get('project_name', backbone_name)}_{time.strftime('%m%d_%H%M')}"
         run = wandb.init(
-            project="diffusion-textguide",
+            project=wandb_cfg.get("project", "diffusion-textguide"),
+            entity=wandb_cfg.get("entity"),
+            group=wandb_cfg.get("group"),
             name=wandb_run_name,
             config=config,
         )
@@ -534,8 +628,16 @@ def train(
         print(f"Max train batches per epoch: {max_train_batches}")
     print(f"AMP (fp16): {'on' if use_amp else 'off'}")
     print(f"Checkpoint every {log_interval} epochs → {ckpt_dir}")
+    if val_samples_per_intent is not None:
+        full_metric_desc = (
+            f"{val_samples_per_intent} samples/intent x {val_num_seeds} seed(s)"
+        )
+    elif val_max_samples is not None:
+        full_metric_desc = f"max {val_max_samples} refs x {val_num_seeds} seed(s)"
+    else:
+        full_metric_desc = f"all validation refs x {val_num_seeds} seed(s)"
     print(f"Val loss every {val_loss_interval} epochs | "
-          f"Full metrics every {val_interval} epochs ({val_max_samples} samples)")
+          f"Full metrics every {val_interval} epochs ({full_metric_desc})")
     print(f"Dataset: {len(train_dataset)} train / {len(val_dataset)} val  "
           f"(vocab_size={train_dataset.vocab_size})")
     print("=" * 62)
@@ -649,6 +751,9 @@ def train(
             fm = compute_full_val_metrics(
                 model, scheduler, val_pt_files, config,
                 device, vocab, max_samples=val_max_samples,
+                samples_per_intent=val_samples_per_intent,
+                seed=val_seed,
+                num_seeds=val_num_seeds,
                 text_encoder_type=text_encoder_type,
                 feature_encoder=feature_encoder,
                 intent_to_id=intent_to_id,

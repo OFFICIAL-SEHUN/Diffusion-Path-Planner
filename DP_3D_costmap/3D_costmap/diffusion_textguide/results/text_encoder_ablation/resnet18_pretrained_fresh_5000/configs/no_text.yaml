@@ -1,4 +1,4 @@
-project_name: DiffusionTextGuide_ResNet_frozen_t5_proj
+project_name: DiffusionTextGuide_ResNet_no_text
 seed: 42
 data:
   img_size: 100
@@ -41,23 +41,29 @@ model:
   visual_backbone: resnet
   timm_model_name: resnet18
   timm_pretrained: true
-  text_encoder_type: t5_proj
+  text_encoder_type: no_text
   text_encoder:
-    type: t5_proj
-    model_name: t5-base
+    type: no_text
+    model_name: null
     batch_size: 64
 training:
   epochs: 5000
   batch_size: 128
   learning_rate: 3.0e-05
-  checkpoint_dir: checkpoints/text_encoder_ablation/resnet18_pretrained/frozen_t5_proj
-  model_name: diffusion_textguide_frozen_t5_proj.pt
+  checkpoint_dir: checkpoints/text_encoder_ablation/resnet18_pretrained_fresh_5000/no_text
+  model_name: diffusion_textguide_no_text.pt
   log_interval: 1000
   use_amp: true
 inference:
   show_progress: true
 logging:
-  val_loss_interval: 500
-  val_interval: 500
+  val_loss_interval: 100
+  val_interval: 1000
   val_max_samples: 50
-  log_dir: logs/text_encoder_ablation/resnet18_pretrained/frozen_t5_proj
+  log_dir: logs/text_encoder_ablation/resnet18_pretrained_fresh_5000/no_text
+  val_samples_per_intent: 50
+  val_seed: 42
+  val_num_seeds: 1
+wandb:
+  project: diffusion-textguide-text-encoder-ablation-5000
+  group: resnet18_pretrained_fresh_5000

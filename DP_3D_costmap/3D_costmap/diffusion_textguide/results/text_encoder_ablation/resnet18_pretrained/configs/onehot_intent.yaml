@@ -47,7 +47,7 @@ model:
     model_name: null
     batch_size: 64
 training:
-  epochs: 500
+  epochs: 5000
   batch_size: 128
   learning_rate: 3.0e-05
   checkpoint_dir: checkpoints/text_encoder_ablation/resnet18_pretrained/onehot_intent
@@ -57,7 +57,7 @@ training:
 inference:
   show_progress: true
 logging:
-  val_loss_interval: 100
-  val_interval: 100
+  val_loss_interval: 500
+  val_interval: 500
   val_max_samples: 50
   log_dir: logs/text_encoder_ablation/resnet18_pretrained/onehot_intent

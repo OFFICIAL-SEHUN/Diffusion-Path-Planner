@@ -334,6 +334,45 @@ def instruction_success(
     return float(np.exp(np.mean(log_s)))
 
 
+def instruction_component_scores(
+    path_norm: np.ndarray,
+    intent_type: str,
+    intent_params: dict,
+    slope_map_deg: np.ndarray,
+    img_size: int,
+    start_pos: tuple,
+    goal_pos: tuple,
+    start_norm: Optional[np.ndarray] = None,
+    goal_norm: Optional[np.ndarray] = None,
+    baseline_path_norm: Optional[np.ndarray] = None,
+    height_map: Optional[np.ndarray] = None,
+    pixel_resolution: float = 0.5,
+    limit_angle_deg: float = 35.0,
+) -> Dict[str, float]:
+    """Return atomic ISR component scores for one path.
+
+    Composite intent collapse is hard to diagnose from only the geometric mean;
+    this helper exposes each component while using the same atomic definitions
+    as :func:`instruction_success`.
+    """
+    if start_norm is None:
+        start_norm = np.array([(start_pos[1] / img_size) * 2 - 1,
+                               (start_pos[0] / img_size) * 2 - 1], dtype=np.float32)
+    if goal_norm is None:
+        goal_norm = np.array([(goal_pos[1] / img_size) * 2 - 1,
+                              (goal_pos[0] / img_size) * 2 - 1], dtype=np.float32)
+
+    parts = [p for p in intent_type.split("+") if p and p != "baseline"]
+    scores: Dict[str, float] = {}
+    for part in parts:
+        scores[part] = float(_atomic_instruction_score(
+            part, path_norm, intent_params, slope_map_deg, img_size,
+            start_pos, goal_pos, start_norm, goal_norm, baseline_path_norm,
+            height_map, pixel_resolution, limit_angle_deg,
+        ))
+    return scores
+
+
 def instruction_success_rate(results: list) -> float:
     """Mean ISR score (each entry in [0, 1])."""
     return float(np.mean(results)) if results else 0.0
@@ -586,6 +625,7 @@ def compute_all_metrics(
     start_pos: Optional[tuple] = None,
     goal_pos: Optional[tuple] = None,
     ref_path_norm: Optional[np.ndarray] = None,
+    baseline_path_norm: Optional[np.ndarray] = None,
     pixel_resolution: float = 0.5,
     limit_angle_deg: float = 35.0,
     risk_threshold_deg: float = 15.0,
@@ -615,10 +655,21 @@ def compute_all_metrics(
         path_norm, intent_type, intent_params,
         slope_map_deg, img_size, start_pos or (0, 0), goal_pos or (0, 0),
         start_norm, goal_norm_v,
+        baseline_path_norm=baseline_path_norm,
         height_map=height_map,
         pixel_resolution=pixel_resolution,
         limit_angle_deg=limit_angle_deg,
     ))
+    for part, score in instruction_component_scores(
+        path_norm, intent_type, intent_params,
+        slope_map_deg, img_size, start_pos or (0, 0), goal_pos or (0, 0),
+        start_norm, goal_norm_v,
+        baseline_path_norm=baseline_path_norm,
+        height_map=height_map,
+        pixel_resolution=pixel_resolution,
+        limit_angle_deg=limit_angle_deg,
+    ).items():
+        m[f"isr_component_{part}"] = score
 
     # energy / safety
     m["cumulative_cot"] = cumulative_cot(path_norm, height_map, img_size, pixel_resolution, limit_angle_deg)

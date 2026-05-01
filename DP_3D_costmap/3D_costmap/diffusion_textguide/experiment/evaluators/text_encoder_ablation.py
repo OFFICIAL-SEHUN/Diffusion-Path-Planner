@@ -11,7 +11,7 @@ import argparse
 import json
 import sys
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Optional
 
@@ -117,8 +117,14 @@ def _aggregate(rows: list[dict]) -> dict:
         return float(np.std(vals)) if vals else float("nan")
 
     per_intent = defaultdict(list)
+    per_intent_teacher = defaultdict(list)
+    per_intent_vs_teacher = defaultdict(list)
     for r in rows:
         per_intent[r["intent_type"]].append(r["isr"])
+        if "teacher_isr" in r:
+            per_intent_teacher[r["intent_type"]].append(r["teacher_isr"])
+        if "isr_vs_teacher" in r:
+            per_intent_vs_teacher[r["intent_type"]].append(r["isr_vs_teacher"])
 
     intent_means = {
         k: float(np.mean([v for v in vals if np.isfinite(v)]))
@@ -129,6 +135,29 @@ def _aggregate(rows: list[dict]) -> dict:
         r["isr"] for r in rows
         if "+" in r["intent_type"] and np.isfinite(r["isr"])
     ]
+    teacher_intent_means = {
+        k: float(np.mean([v for v in vals if np.isfinite(v)]))
+        for k, vals in per_intent_teacher.items()
+        if vals
+    }
+    vs_teacher_intent_means = {
+        k: float(np.mean([v for v in vals if np.isfinite(v)]))
+        for k, vals in per_intent_vs_teacher.items()
+        if vals
+    }
+    component_keys = sorted(
+        k for r in rows for k in r
+        if k.startswith("isr_component_")
+    )
+    teacher_component_keys = sorted(
+        k for r in rows for k in r
+        if k.startswith("teacher_isr_component_")
+    )
+    worst_intent = min(intent_means, key=intent_means.get) if intent_means else None
+    worst_vs_teacher_intent = (
+        min(vs_teacher_intent_means, key=vs_teacher_intent_means.get)
+        if vs_teacher_intent_means else None
+    )
 
     return {
         "mean_isr": mean("isr"),
@@ -136,6 +165,16 @@ def _aggregate(rows: list[dict]) -> dict:
         "composite_isr": float(np.mean(composite_vals)) if composite_vals else float("nan"),
         "composite_isr_std": float(np.std(composite_vals)) if composite_vals else float("nan"),
         "worst_isr": float(min(intent_means.values())) if intent_means else float("nan"),
+        "worst_isr_intent": worst_intent,
+        "teacher_mean_isr": mean("teacher_isr"),
+        "teacher_worst_isr": (
+            float(min(teacher_intent_means.values())) if teacher_intent_means else float("nan")
+        ),
+        "mean_isr_vs_teacher": mean("isr_vs_teacher"),
+        "worst_isr_vs_teacher": (
+            float(min(vs_teacher_intent_means.values())) if vs_teacher_intent_means else float("nan")
+        ),
+        "worst_isr_vs_teacher_intent": worst_vs_teacher_intent,
         "cot": mean("cumulative_cot"),
         "cot_std": std("cumulative_cot"),
         "risk": mean("risk_integral"),
@@ -145,13 +184,34 @@ def _aggregate(rows: list[dict]) -> dict:
         "latency_s": mean("latency_s"),
         "latency_s_std": std("latency_s"),
         "per_intent_isr": intent_means,
+        "per_intent_teacher_isr": teacher_intent_means,
+        "per_intent_isr_vs_teacher": vs_teacher_intent_means,
         "per_intent_count": {k: len(v) for k, v in per_intent.items()},
+        "component_isr": {
+            k.replace("isr_component_", ""): mean(k)
+            for k in component_keys
+        },
+        "teacher_component_isr": {
+            k.replace("teacher_isr_component_", ""): mean(k)
+            for k in teacher_component_keys
+        },
+        "terrain_count": len({r.get("terrain_id") for r in rows if r.get("terrain_id")}),
         "n": len(rows),
     }
 
 
-def _build_intent_balanced_refs(pt_files: list[Path], max_samples: int) -> list[tuple[str, int, str]]:
-    """Create near-uniform eval refs via round-robin over intent buckets."""
+def _build_intent_balanced_refs(
+    pt_files: list[Path],
+    max_samples: Optional[int] = None,
+    samples_per_intent: Optional[int] = None,
+    seed: int = 42,
+) -> list[tuple[str, int, str]]:
+    """Create intent-balanced eval refs without biasing toward early files.
+
+    If ``samples_per_intent`` is set, draw up to that many references per
+    intent. Otherwise draw ``max_samples`` total references by round-robin over
+    shuffled intent buckets. If both caps are unset, use every validation ref.
+    """
     by_intent = defaultdict(list)
     for pt_path in pt_files:
         terrain = load_terrain(str(pt_path))
@@ -164,7 +224,21 @@ def _build_intent_balanced_refs(pt_files: list[Path], max_samples: int) -> list[
     if not by_intent:
         return []
 
+    rng = np.random.default_rng(seed)
     ordered_intents = sorted(by_intent.keys())
+    for intent in ordered_intents:
+        rng.shuffle(by_intent[intent])
+
+    if samples_per_intent is not None:
+        refs = []
+        for intent in ordered_intents:
+            refs.extend(by_intent[intent][:samples_per_intent])
+        rng.shuffle(refs)
+        return refs
+
+    if max_samples is None:
+        max_samples = sum(len(v) for v in by_intent.values())
+
     cursors = {intent: 0 for intent in ordered_intents}
     refs: list[tuple[str, int, str]] = []
 
@@ -182,6 +256,13 @@ def _build_intent_balanced_refs(pt_files: list[Path], max_samples: int) -> list[
         if not progressed:
             break
     return refs
+
+
+def _set_sampling_seed(seed: int, device: torch.device) -> None:
+    """Reset DDPM sampling RNG so paired seen/unseen prompts share noise."""
+    torch.manual_seed(seed)
+    if device.type == "cuda":
+        torch.cuda.manual_seed_all(seed)
 
 
 @torch.no_grad()
@@ -215,9 +296,15 @@ def evaluate(args):
     rows_unseen = []
 
     pt_files = sorted(_resolve_path(args.data_dir).glob("*.pt"))
-    refs = _build_intent_balanced_refs(pt_files, args.max_samples)
+    refs = _build_intent_balanced_refs(
+        pt_files,
+        max_samples=args.max_samples,
+        samples_per_intent=args.samples_per_intent,
+        seed=args.seed,
+    )
+    ref_intent_counts = Counter(intent for _, _, intent in refs)
     terrain_cache: dict[str, dict] = {}
-    for n_seen, (pt_path_str, i, intent_type) in enumerate(refs, start=1):
+    for ref_idx, (pt_path_str, i, intent_type) in enumerate(refs, start=1):
         terrain = terrain_cache.get(pt_path_str)
         if terrain is None:
             terrain = load_terrain(pt_path_str)
@@ -244,27 +331,13 @@ def evaluate(args):
         intent_params = intent_params_list[i] if i < len(intent_params_list) else {}
         seen_instruction = instructions[i] if i < len(instructions) else intent_type
         valid_list = unseen_templates.get(intent_type, [seen_instruction])
-        unseen_instruction = valid_list[i % len(valid_list)]
+        unseen_instruction = valid_list[(ref_idx - 1) % len(valid_list)]
 
-        for split, instruction, bucket in (
-            ("seen", seen_instruction, rows_seen),
-            ("unseen", unseen_instruction, rows_unseen),
-        ):
-            kwargs = _text_kwargs(
-                text_encoder_type, instruction, intent_type, vocab,
-                device, intent_to_id, feature_encoder,
-            )
-            t0 = time.perf_counter()
-            gen = scheduler.sample(
-                model, costmap_t, shape=(1, horizon, 2),
-                start_pos=s_norm, end_pos=g_norm,
-                show_progress=False,
-                **kwargs,
-            )[0].cpu().numpy()
-            latency = time.perf_counter() - t0
+        baseline_path = None
+        if "baseline" in intent_types:
+            baseline_path = paths[intent_types.index("baseline")]
 
-            m = compute_all_metrics(
-                path_norm=gen,
+        metric_kwargs = dict(
                 goal_norm=g_norm[0].cpu().numpy(),
                 slope_map_deg=terrain["slope_map"],
                 height_map=terrain["height_map"],
@@ -274,6 +347,7 @@ def evaluate(args):
                 start_pos=start,
                 goal_pos=goal,
                 ref_path_norm=paths[i],
+                baseline_path_norm=baseline_path,
                 pixel_resolution=float(terrain.get("pixel_resolution", pixel_res)),
                 limit_angle_deg=float(terrain.get("limit_angle_deg", limit_deg)),
                 risk_threshold_deg=float(terrain.get("risk_threshold_deg", risk_thresh)),
@@ -282,17 +356,61 @@ def evaluate(args):
                 gamma=cw.get("gamma", 0.1),
                 delta=cw.get("delta", 1.0),
             )
-            m.update({
-                "split": split,
-                "intent_type": intent_type,
-                "instruction": instruction,
-                "latency_s": latency,
-            })
-            bucket.append(m)
+
+        teacher_m = compute_all_metrics(path_norm=paths[i], **metric_kwargs)
+
+        for seed_idx in range(args.num_seeds):
+            sample_seed = int(args.seed + seed_idx * 1_000_003 + ref_idx)
+            for split, instruction, bucket in (
+                ("seen", seen_instruction, rows_seen),
+                ("unseen", unseen_instruction, rows_unseen),
+            ):
+                kwargs = _text_kwargs(
+                    text_encoder_type, instruction, intent_type, vocab,
+                    device, intent_to_id, feature_encoder,
+                )
+                _set_sampling_seed(sample_seed, device)
+                t0 = time.perf_counter()
+                gen = scheduler.sample(
+                    model, costmap_t, shape=(1, horizon, 2),
+                    start_pos=s_norm, end_pos=g_norm,
+                    show_progress=False,
+                    **kwargs,
+                )[0].cpu().numpy()
+                latency = time.perf_counter() - t0
+
+                m = compute_all_metrics(path_norm=gen, **metric_kwargs)
+                m["teacher_isr"] = teacher_m["isr"]
+                for key, value in teacher_m.items():
+                    if key.startswith("isr_component_"):
+                        m[f"teacher_{key}"] = value
+                m["isr_vs_teacher"] = m["isr"] / max(teacher_m["isr"], 1e-8)
+                m.update({
+                    "split": split,
+                    "intent_type": intent_type,
+                    "instruction": instruction,
+                    "latency_s": latency,
+                    "terrain_id": Path(pt_path_str).stem,
+                    "path_index": i,
+                    "ref_index": ref_idx,
+                    "seed_index": seed_idx,
+                    "sampling_seed": sample_seed,
+                })
+                bucket.append(m)
 
     summary = {
         "checkpoint": str(_resolve_path(args.checkpoint)),
         "text_encoder": text_encoder_type,
+        "eval_sampling": {
+            "max_samples": args.max_samples,
+            "samples_per_intent": args.samples_per_intent,
+            "seed": args.seed,
+            "num_seeds": args.num_seeds,
+            "n_refs": len(refs),
+            "n_terrains": len({Path(r[0]).stem for r in refs}),
+            "per_intent_ref_count": dict(sorted(ref_intent_counts.items())),
+            "shared_noise_for_seen_unseen": True,
+        },
         "seen": _aggregate(rows_seen),
         "unseen": _aggregate(rows_unseen),
         "rows": {
@@ -311,7 +429,12 @@ def evaluate(args):
         "mean_isr": summary["seen"]["mean_isr"],
         "composite_isr": summary["seen"]["composite_isr"],
         "worst_isr": summary["seen"]["worst_isr"],
+        "worst_isr_intent": summary["seen"]["worst_isr_intent"],
+        "teacher_worst_isr": summary["seen"]["teacher_worst_isr"],
+        "mean_isr_vs_teacher": summary["seen"]["mean_isr_vs_teacher"],
         "unseen_isr": summary["unseen"]["mean_isr"],
+        "n_refs": summary["eval_sampling"]["n_refs"],
+        "n_terrains": summary["eval_sampling"]["n_terrains"],
         "cot": summary["seen"]["cot"],
         "risk": summary["seen"]["risk"],
         "cost_gap": summary["seen"]["cost_gap"],
@@ -326,7 +449,25 @@ def main():
     parser.add_argument("--data-dir", default="data/valid")
     parser.add_argument("--output", default="results/text_encoder_ablation/eval_summary.json")
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--max-samples", type=int, default=50)
+    parser.add_argument(
+        "--max-samples",
+        type=int,
+        default=None,
+        help="Optional total cap. Unset means use every validation reference.",
+    )
+    parser.add_argument(
+        "--samples-per-intent",
+        type=int,
+        default=None,
+        help="Optional per-intent cap. Unset means use every validation reference.",
+    )
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--num-seeds",
+        type=int,
+        default=1,
+        help="Repeat DDPM sampling per reference with deterministic seeds.",
+    )
     args = parser.parse_args()
     evaluate(args)
 

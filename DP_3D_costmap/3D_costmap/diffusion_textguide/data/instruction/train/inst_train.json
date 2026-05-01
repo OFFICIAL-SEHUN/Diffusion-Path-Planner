@@ -41,13 +41,6 @@
     "Choose the most level path available",
     "Stay on the smoothest terrain you can find"
   ],
-  "minimize_elevation_change": [
-    "Minimize elevation changes along the way",
-    "Take a route with as little height change as possible",
-    "Avoid unnecessary ups and downs",
-    "Follow a path with minimal elevation variation",
-    "Keep the altitude changes as small as possible"
-  ],
   "short_path": [
     "Take the shortest route possible",
     "Use the most direct path to the goal",
@@ -89,12 +82,5 @@
     "Keep the path short but stay away from steep terrain",
     "Find a compact route around steep sections",
     "Minimize distance without crossing steep areas"
-  ],
-  "energy_efficient+minimize_elevation_change": [
-    "Choose an energy-efficient route with minimal elevation change",
-    "Minimize effort while avoiding unnecessary ups and downs",
-    "Take a low-energy path with as little height variation as possible",
-    "Follow the most efficient route while keeping elevation changes small",
-    "Reduce energy cost and keep the route as smooth in height as possible"
   ]
 }

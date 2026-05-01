@@ -1,21 +1,21 @@
 # ─────────────────────────────────────────────────────────
-# Exp 1b — Refined Pareto sweep (2nd stage)
+# Exp 1b — Refined Pareto sweep (2nd stage, ~625 combos)
 # ─────────────────────────────────────────────────────────
-# Around balanced pick (α,β,γ,δ) ≈ (2.0, 1.5, 0.5, 2.0) from coarse grid,
-# with 0.1 steps and slightly *larger* α, β, δ than the old box max (2.0, 1.5, 2.0).
-# γ focuses on interior band 0.2–0.9 (coarse sweep already had 0, 0.1, 0.5, 1.0).
+# Run AFTER the coarse sweep finishes. Update the (α*, β*, γ*, δ*) center
+# below to the coarse-stage best (from results/pareto/pareto_summary.txt),
+# then this file expands ±0.5 around it with 0.25 steps (5 values per axis).
 #
-# Combinations: 8×7×8×8 = 3584  (× num_terrains × 6 intents path finds)
-# Quick test: set terrain.num_terrains to 10–20 in this file.
+# Below grid is a placeholder centered at (1.0, 1.0, 0.5, 2.0) — replace
+# after seeing coarse results. 5⁴ = 625 combos × 50 terrains × 12 intents.
 #
-# Run (from diffusion_textguide/):
+# Run:
 #   python -m experiment.evaluators.pareto \
 #       --config experiment/configs/pareto_sweep_refine.yaml \
 #       --output-dir results/pareto_refine
 # ─────────────────────────────────────────────────────────
 
 terrain:
-  num_terrains: 30
+  num_terrains: 50              # coarse보다 더 많은 터레인으로 통계 신뢰도↑
   img_size: 100
   height_range: [0, 5]
   terrain_scales: [[20, 10], [10, 5], [5, 2]]
@@ -23,11 +23,15 @@ terrain:
   pixel_resolution: 0.5
   max_iterations: 20000
 
+# Placeholder (center = (1.0, 1.0, 0.5, 2.0)). Update post-coarse:
+#   α: {α*−0.5, α*−0.25, α*, α*+0.25, α*+0.5} (clip ≥ 0)
+#   β, γ, δ: 동일 패턴 (≥ 0)
+# 5 × 5 × 5 × 5 = 625 combos
 sweep:
-  alpha: [0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0]
-  beta:  [1.2, 1.4, 1.5, 1.6, 1.8, 2.0, 2.2]
-  gamma: [0.2, 0.3, 0.4, 0.5, 0.6]
-  delta: [2.0, 2.1, 2.2, 2.3, 2.4, 2.5]
+  alpha: [0.5, 0.75, 1.0, 1.25, 1.5]
+  beta:  [0.5, 0.75, 1.0, 1.25, 1.5]
+  gamma: [0.0, 0.25, 0.5, 0.75, 1.0]
+  delta: [1.5, 1.75, 2.0, 2.25, 2.5]
 
 intents:
   - baseline
@@ -36,14 +40,12 @@ intents:
   - center_bias
   - avoid_steep
   - prefer_flat
-  - minimize_elevation_change
   - short_path
   - energy_efficient
   - left_bias+avoid_steep
   - right_bias+prefer_flat
   - center_bias+prefer_flat
   - short_path+avoid_steep
-  - energy_efficient+minimize_elevation_change
 
 horizon: 120
 risk_threshold_deg: 15.0

@@ -71,18 +71,6 @@
     "Prefer smooth and flat portions of the map",
     "Plan through regions with small slope values"
   ],
-  "minimize_elevation_change": [
-    "Keep the elevation profile as steady as possible",
-    "Avoid repeated climbing and descending",
-    "Choose a route with minimal height variation",
-    "Reduce total vertical change along the path",
-    "Plan a trajectory with few altitude fluctuations",
-    "Keep the route from going up and down unnecessarily",
-    "Prefer a path with a stable elevation trend",
-    "Minimize cumulative changes in height",
-    "Avoid routes with large vertical oscillations",
-    "Keep the robot at a similar elevation when possible"
-  ],
   "short_path": [
     "Reach the goal using the least travel distance",
     "Take a compact route to the destination",
@@ -154,17 +142,5 @@
     "Move efficiently to the goal without crossing steep patches",
     "Keep the path length low while avoiding difficult slopes",
     "Find a short route that remains safe from steep terrain"
-  ],
-  "energy_efficient+minimize_elevation_change": [
-    "Reduce locomotion effort while keeping height variation low",
-    "Choose a low-energy route with a stable elevation profile",
-    "Minimize transport cost and avoid repeated climbs or descents",
-    "Plan an economical path with little vertical fluctuation",
-    "Use a route that saves energy and keeps elevation steady",
-    "Avoid energy-heavy terrain and large altitude changes",
-    "Move to the goal with low effort and minimal height variation",
-    "Select a path with low locomotion cost and smooth elevation",
-    "Keep traversal efficient while reducing cumulative vertical change",
-    "Find a route that limits both energy use and elevation variation"
   ]
 }

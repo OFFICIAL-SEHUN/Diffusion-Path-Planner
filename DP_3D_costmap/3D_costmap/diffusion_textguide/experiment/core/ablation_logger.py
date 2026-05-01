@@ -42,14 +42,12 @@ KNOWN_INTENTS: list[str] = [
     "center_bias",
     "avoid_steep",
     "prefer_flat",
-    "minimize_elevation_change",
     "short_path",
     "energy_efficient",
     "left_bias+avoid_steep",
     "right_bias+prefer_flat",
     "center_bias+prefer_flat",
     "short_path+avoid_steep",
-    "energy_efficient+minimize_elevation_change",
 ]
 
 # Primary columns (printed to stdout)

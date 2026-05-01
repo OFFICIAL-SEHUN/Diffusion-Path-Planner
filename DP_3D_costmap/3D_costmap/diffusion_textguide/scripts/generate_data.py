@@ -21,7 +21,7 @@ Step cost (v2, all terms ∈ [0, 1]):
 
 Two intent classes are handled jointly:
   • Penalty intents  → contribute to δ·Î (left/right/center, avoid_steep,
-                       prefer_flat, minimize_elevation_change).
+                       prefer_flat).
   • Weight modulators → scale the base (α, β) before A* runs and contribute
                        0 to δ·Î (short_path, energy_efficient).
 
@@ -93,7 +93,7 @@ WEIGHT_MODULATORS = {
 # Atomic penalty intents (used by _I_atomic). All others contribute 0 penalty.
 PENALTY_INTENTS = {
     "left_bias", "right_bias", "center_bias",
-    "avoid_steep", "prefer_flat", "minimize_elevation_change",
+    "avoid_steep", "prefer_flat",
 }
 
 INTENT_CATALOG = [
@@ -108,7 +108,6 @@ INTENT_CATALOG = [
     # --- terrain-based penalty intents ---
     {"type": "avoid_steep",                                 "params": {"tau_steep_deg": 20.0}},
     {"type": "prefer_flat",                                 "params": {}},
-    {"type": "minimize_elevation_change",                   "params": {}},
 
     # --- pure weight modulators (no δ-penalty) ---
     {"type": "short_path",                                  "params": {}},
@@ -121,7 +120,6 @@ INTENT_CATALOG = [
 
     # --- composite (modulator + penalty) ---
     {"type": "short_path+avoid_steep",                      "params": {"tau_steep_deg": 20.0}},
-    {"type": "energy_efficient+minimize_elevation_change",  "params": {}},
 ]
 
 
@@ -399,18 +397,6 @@ def _I_atomic(intent, node_j, prev_node, slope_map_rad, height_map,
     if intent == "prefer_flat":
         return float(np.clip(abs(s_deg) / max(SLOPE_LIMIT_DEG, 1e-6), 0.0, 1.0))
 
-    if intent == "minimize_elevation_change":
-        # Edge-level Δh (differs from prefer_flat: focuses on cumulative climb).
-        if prev_node is None or height_map is None:
-            return 0.0
-        pr, pc = prev_node
-        delta_h = abs(float(height_map[r, c]) - float(height_map[pr, pc]))
-        # Normalization: max plausible Δh per single edge step
-        # = tan(s_lim) * (sqrt(2) * pixel_size) — with pixel_size ≈ 1 here
-        # because slope_map is computed with a fixed pixel_resolution upstream.
-        delta_h_max = max(np.tan(np.radians(SLOPE_LIMIT_DEG)) * np.sqrt(2.0), 1e-6)
-        return float(np.clip(delta_h / delta_h_max, 0.0, 1.0))
-
     return 0.0
 
 
@@ -652,7 +638,7 @@ class SlopeCotGenerator:
         Two intent classes are handled here:
 
         * **Penalty intents** (left_bias / right_bias / center_bias /
-          avoid_steep / prefer_flat / minimize_elevation_change) contribute to
+          avoid_steep / prefer_flat) contribute to
           the δ·Î term inside A*; they all use the deterministic straight
           start→goal line as their lateral reference (no chicken-and-egg
           dependency on a baseline A* call).

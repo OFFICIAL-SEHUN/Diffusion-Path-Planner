@@ -276,15 +276,6 @@ def _atomic_instruction_score(
         mean_s = float(np.mean(slope_map_deg[rc[:, 0], rc[:, 1]]))
         return float(np.clip(1.0 - _tilde_linear(mean_s, scale_deg), 0.0, 1.0))
 
-    if part == "minimize_elevation_change":
-        if height_map is None:
-            return 0.0
-        scale_v = float(intent_params.get("isr_elev_change_scale", 80.0))
-        rc = _px_int(_norm_to_px(path_norm, img_size), img_size)
-        h = height_map[rc[:, 0], rc[:, 1]].astype(np.float64)
-        v = float(np.sum(np.abs(np.diff(h))))
-        return float(np.clip(1.0 - _tilde_linear(v, scale_v), 0.0, 1.0))
-
     if part == "short_path":
         scale_f = float(intent_params.get("isr_short_len_scale_factor", 2.5))
         L = path_length(path_norm)
@@ -567,7 +558,7 @@ def instruction_adherence_gap(
             off_gen = _path_centroid_offset(path_norm, s_norm, g_norm)
             off_ref = _path_centroid_offset(ref_path_norm, s_norm, g_norm)
             gap[f"{part}_offset_gap"] = off_gen - off_ref
-        elif part in ("avoid_steep", "prefer_flat", "minimize_elevation_change", "energy_efficient"):
+        elif part in ("avoid_steep", "prefer_flat", "energy_efficient"):
             ms_gen = mean_slope_along_path(path_norm, slope_map_deg, img_size)
             ms_ref = mean_slope_along_path(ref_path_norm, slope_map_deg, img_size)
             gap[f"{part}_mean_slope_gap"] = ms_gen - ms_ref

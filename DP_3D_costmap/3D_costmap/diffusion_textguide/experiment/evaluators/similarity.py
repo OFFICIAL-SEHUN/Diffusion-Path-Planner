@@ -249,14 +249,12 @@ def _intent_display_name(intent: str) -> str:
         "center_bias": "Center",
         "avoid_steep": "Avoid",
         "prefer_flat": "Flat",
-        "minimize_elevation_change": "ΔElev",
         "short_path": "Short",
         "energy_efficient": "Energy",
         "left_bias+avoid_steep": "Left+Steep",
         "right_bias+prefer_flat": "Right+Flat",
         "center_bias+prefer_flat": "Ctr+Flat",
         "short_path+avoid_steep": "Short+Steep",
-        "energy_efficient+minimize_elevation_change": "En+ΔEl",
     }
     return labels.get(intent, intent.replace("_", " "))
 

@@ -1,8 +1,20 @@
 # ─────────────────────────────────────────────────────────
-# Exp 1 — Pareto Weight Sweep Configuration (coarse grid, 192 combos)
+# Exp 1 — Pareto Weight Sweep (coarse stage, 192 combos)
 # ─────────────────────────────────────────────────────────
-# 2nd stage (~3584 combos, 0.1 near (2,1.5,0.5,2) + higher α,β,δ caps):
-#   experiment/configs/pareto_sweep_refine.yaml
+# Step cost is dimensionless (each term ∈ [0,1]):
+#   ĉ_ij = α·d̂_ij + β·ê(s_j)·d̂_ij + γ·R̂(s_j) + δ·Î_j
+#   d̂ ∈ [0,1]   (real_d / (√2·pixel_res))
+#   ê ∈ [0,1]   (Go2 CoT poly normalized over [−s_lim, +s_lim])
+#   R̂ ∈ [0,1]   (clip((|s|−τ_R)/(s_lim−τ_R), 0, 1), τ_R=15°, s_lim=25°)
+#   Î ∈ [0,1]   (penalty intents only; modulators contribute 0)
+#
+# Therefore (α,β,γ,δ) ratios directly = each term's relative influence.
+# Coarse grid sweeps a wide ratio range; refine stage zooms ±0.5 around best.
+#
+# Run:
+#   python -m experiment.evaluators.pareto \
+#       --config experiment/configs/pareto_sweep.yaml \
+#       --output-dir results/pareto
 # ─────────────────────────────────────────────────────────
 
 terrain:
@@ -14,16 +26,18 @@ terrain:
   pixel_resolution: 0.5
   max_iterations: 20000
 
-# Cartesian product of these lists → all (α,β,γ,δ) combos
+# 3 × 4 × 4 × 4 = 192 combos (× 30 terrains × 12 intents)
 sweep:
-  # alpha: [0.5, 1.0, 2.0]
-  # beta:  [0.0, 0.4, 0.8, 1.5]
-  # gamma: [0.0, 0.1, 0.5, 1.0]
-  # delta: [0.0, 0.5, 1.0, 2.0]
-  alpha: [0.5, 1.0, 2.0, 2.4]
-  beta:  [0.0, 0.4, 0.8, 1.5, 1.7, 1.8]
-  gamma: [0.1, 0.2, 0.3, 0.4, 0.5]
-  delta: [2.0, 2.1, 2.2, 2.3, 2.4]
+  # α: geodesic distance weight (baseline; α=0 → degenerate, α=1 = unit reference)
+  alpha: [0.5, 1.0, 2.0]
+  # β: CoT-along-distance weight (β·ê·d̂). β=0 → CoT 무시.
+  # ê·d̂의 평균 effective scale은 ~0.3 이라 β는 다른 것보다 크게 잡음.
+  beta:  [0.0, 0.5, 1.0, 2.0]
+  # γ: risk (slope safety) weight. γ=0 → 위험 슬로프 무시 (단, limit_angle_deg는 hard cut).
+  gamma: [0.0, 0.5, 1.0, 2.0]
+  # δ: intent penalty weight. δ가 클수록 의도 추종 강함.
+  # penalty intents가 path를 휘게 만들려면 α·d̂보다 충분히 커야 의미.
+  delta: [0.5, 1.0, 2.0, 4.0]
 
 # Mirrors scripts/generate_data.py INTENT_CATALOG (keep in sync).
 intents:
@@ -33,14 +47,12 @@ intents:
   - center_bias
   - avoid_steep
   - prefer_flat
-  - minimize_elevation_change
   - short_path
   - energy_efficient
   - left_bias+avoid_steep
   - right_bias+prefer_flat
   - center_bias+prefer_flat
   - short_path+avoid_steep
-  - energy_efficient+minimize_elevation_change
 
 horizon: 120
 risk_threshold_deg: 15.0

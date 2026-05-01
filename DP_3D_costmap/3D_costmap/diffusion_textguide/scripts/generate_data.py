@@ -1,18 +1,32 @@
 """
-Intent 기반 지형 경로 생성 스크립트 (Section 6 구현)
+Intent-conditioned pseudo-label path generation (CoRL submission, v2).
 
-파이프라인:
-  1. height map 생성 (Gaussian-smoothed multi-scale)
-  2. slope map 계산
-  3. start-goal 샘플링
-  4. pseudo label 기반 intent 정의
-  5. 4-term cost A* (dist + CoT + Risk + IntentPenalty) 로 GT path 생성
-  6. 자연어 instruction 자동 부착
+Pipeline (per terrain):
+  1. height map  : multi-scale Gaussian-smoothed noise
+  2. slope map   : finite-difference gradient → arctan magnitude
+  3. start/goal  : sampled near opposing corners with feasibility filter
+  4. intents     : INTENT_CATALOG (penalty intents + weight modulators)
+  5. A* search   : 4-term **dimensionless** step cost (every term in [0, 1])
+  6. instruction : sampled from inst_train.json templates per intent
 
-4-term transition cost:
-  c_{ij} = α·d_{ij} + β·CoT_{ij}·d_{ij} + γ·Risk_{ij} + δ·IntentPenalty_{ij}
+Step cost (v2, all terms ∈ [0, 1]):
+  ĉ_ij = α · d̂_ij  +  β · ê(s_j) · d̂_ij  +  γ · R̂(s_j)  +  δ · Î_j(intent)
 
-동일 terrain + 동일 start-goal에서 intent만 변경하여 복수 경로 생성
+  • d̂ = real_d / d_max,  d_max = √2 · pixel_resolution
+  • ê = (g(s) − g_min) / (g_max − g_min);  g(s) = Go2 4th-degree polynomial in s (deg),
+        from ``CoT-Regression/`` (``np.polyfit`` on Table 2). Export JSON via
+        ``python3 .../CoT-Regression/Planetary_CoT.py`` → ``data/cot_model.json``.
+  • R̂ = clip((|s| − τ_R) / (s_lim − τ_R), 0, 1)
+  • Î = mean of atomic intent scores (composites use soft-AND mean)
+
+Two intent classes are handled jointly:
+  • Penalty intents  → contribute to δ·Î (left/right/center, avoid_steep,
+                       prefer_flat, minimize_elevation_change).
+  • Weight modulators → scale the base (α, β) before A* runs and contribute
+                       0 to δ·Î (short_path, energy_efficient).
+
+Lateral intents use the deterministic straight start→goal line as their
+reference (no chicken-and-egg dependency on a baseline A* call).
 """
 
 import os
@@ -60,98 +74,276 @@ def _sample_instruction(intent_type):
 
 
 # ============================================================================
-# Intent Catalog
+# Intent Catalog (v2)
 # ============================================================================
+# Two intent classes:
+#   (1) Penalty intents  → contribute to the δ·Î_j term in the step cost.
+#                          Î ∈ [0, 1] regardless of intent (uniform scale).
+#   (2) Weight modulators → adjust the base (α, β) before A* runs;
+#                          contribute 0 to δ·Î.
+# Composite intents may mix both classes.
+
+# Multipliers applied to (α, β) when the intent string contains the key.
+# 1.0 means unchanged.
+WEIGHT_MODULATORS = {
+    "short_path":       {"alpha_mult": 2.0, "beta_mult": 0.5},
+    "energy_efficient": {"alpha_mult": 0.5, "beta_mult": 2.0},
+}
+
+# Atomic penalty intents (used by _I_atomic). All others contribute 0 penalty.
+PENALTY_INTENTS = {
+    "left_bias", "right_bias", "center_bias",
+    "avoid_steep", "prefer_flat", "minimize_elevation_change",
+}
 
 INTENT_CATALOG = [
-    {"type": "baseline",                             "params": {}},
-    {"type": "left_bias",                            "params": {"lambda_side": 5.0}},
-    {"type": "right_bias",                           "params": {"lambda_side": 5.0}},
-    {"type": "center_bias",                          "params": {"lambda_center": 5.0}},
-    {"type": "avoid_steep",                          "params": {"lambda_steep": 5.0, "tau_steep": 20.0}},
-    {"type": "prefer_flat",                          "params": {"lambda_flat": 1.0}},
-    {"type": "minimize_elevation_change",           "params": {"lambda_elev": 0.08}},
-    {"type": "short_path",                           "params": {"lambda_detour": 4.0}},
-    {"type": "energy_efficient",                    "params": {"lambda_energy": 0.12}},
-    {"type": "left_bias+avoid_steep",               "params": {
-        "lambda_side": 5.0, "lambda_steep": 5.0, "tau_steep": 20.0}},
-    {"type": "right_bias+prefer_flat",               "params": {
-        "lambda_side": 5.0, "lambda_flat": 1.0}},
-    {"type": "center_bias+prefer_flat",              "params": {
-        "lambda_center": 5.0, "lambda_flat": 1.0}},
-    {"type": "short_path+avoid_steep",               "params": {
-        "lambda_detour": 4.0, "lambda_steep": 5.0, "tau_steep": 20.0}},
-    {"type": "energy_efficient+minimize_elevation_change", "params": {
-        "lambda_energy": 0.12, "lambda_elev": 0.08}},
+    # --- baseline ---
+    {"type": "baseline",                                    "params": {}},
+
+    # --- lateral (deterministic straight-line reference) ---
+    {"type": "left_bias",                                   "params": {}},
+    {"type": "right_bias",                                  "params": {}},
+    {"type": "center_bias",                                 "params": {}},
+
+    # --- terrain-based penalty intents ---
+    {"type": "avoid_steep",                                 "params": {"tau_steep_deg": 20.0}},
+    {"type": "prefer_flat",                                 "params": {}},
+    {"type": "minimize_elevation_change",                   "params": {}},
+
+    # --- pure weight modulators (no δ-penalty) ---
+    {"type": "short_path",                                  "params": {}},
+    {"type": "energy_efficient",                            "params": {}},
+
+    # --- composite (penalty + penalty) ---
+    {"type": "left_bias+avoid_steep",                       "params": {"tau_steep_deg": 20.0}},
+    {"type": "right_bias+prefer_flat",                      "params": {}},
+    {"type": "center_bias+prefer_flat",                     "params": {}},
+
+    # --- composite (modulator + penalty) ---
+    {"type": "short_path+avoid_steep",                      "params": {"tau_steep_deg": 20.0}},
+    {"type": "energy_efficient+minimize_elevation_change",  "params": {}},
 ]
 
 
 # ============================================================================
-# CoT 계산
+# Cost of Transport — 4th-degree polynomial (Isaac Lab Go2, Table 2)
 # ============================================================================
+# g(s) = a·s⁴ + b·s³ + c·s² + d·s + e   (s in degrees)
+#
+# Source of truth: ``CoT-Regression/`` (``coefficient.py`` + ``Planetary_CoT.py``).
+# Export JSON for planners:
+#     python3 DP_3D_costmap/3D_costmap/CoT-Regression/Planetary_CoT.py
+#   → writes ``diffusion_textguide/data/cot_model.json``
+#
+# Default coefficients match the regression used in ``Planetary_CoT.py``
+# before export; after running the script, JSON is overwritten by np.polyfit.
+
+SLOPE_LIMIT_DEG = 25.0
+RISK_THRESHOLD_DEG_DEFAULT = 15.0
+
+# Fallback if ``data/cot_model.json`` is missing (same as CoT-Regression/Planetary_CoT.py)
+COT_POLY_COEFFS = {
+    "a": 6.19e-07,
+    "b": 3.72e-05,
+    "c": 1.14e-03,
+    "d": 2.37e-03,
+    "e": 0.44,
+}
+
+_G_COT_NORM_CACHE = {"g_min": None, "g_max": None}
+_DEFAULT_COT_JSON = _ROOT / "data" / "cot_model.json"
+
+
+def _g_cot_poly(slope_deg, coeffs=None):
+    """Go2 CoT(slope) — degree-4 polynomial in degrees (vectorised)."""
+    c = coeffs if coeffs is not None else COT_POLY_COEFFS
+    s = np.asarray(slope_deg, dtype=np.float64)
+    a, b, cc, d, e = c["a"], c["b"], c["c"], c["d"], c["e"]
+    return (a * s**4 + b * s**3 + cc * s**2 + d * s + e).astype(np.float32)
+
+
+def _refresh_cot_norm_cache():
+    """Recompute g_min / g_max over [-SLOPE_LIMIT_DEG, +SLOPE_LIMIT_DEG]."""
+    grid = np.linspace(-SLOPE_LIMIT_DEG, SLOPE_LIMIT_DEG, 257)
+    vals = _g_cot_poly(grid)
+    _G_COT_NORM_CACHE["g_min"] = float(np.min(vals))
+    _G_COT_NORM_CACHE["g_max"] = float(np.max(vals))
+
+
+def set_cot_model(coefficients=None, slope_limit_deg=None):
+    """Override the global CoT polynomial at runtime.
+
+    ``coefficients`` dict may contain any subset of keys ``a, b, c, d, e``.
+    """
+    global SLOPE_LIMIT_DEG
+    if coefficients:
+        for k in ("a", "b", "c", "d", "e"):
+            if k in coefficients:
+                COT_POLY_COEFFS[k] = float(coefficients[k])
+    if slope_limit_deg is not None:
+        SLOPE_LIMIT_DEG = float(slope_limit_deg)
+    _refresh_cot_norm_cache()
+
+
+def _try_load_cot_json():
+    if not _DEFAULT_COT_JSON.exists():
+        _refresh_cot_norm_cache()
+        return
+    try:
+        import json as _json
+        data = _json.loads(_DEFAULT_COT_JSON.read_text())
+        model = data.get("model", "poly4_deg")
+        if model != "poly4_deg":
+            print(f"[generate_data] unsupported cot_model.json model={model!r}; "
+                  f"expected 'poly4_deg'. Using built-in coefficients.")
+            _refresh_cot_norm_cache()
+            return
+        coef = data.get("coefficients", {})
+        norm = data.get("normalization", {})
+        set_cot_model(coefficients=coef, slope_limit_deg=norm.get("slope_limit_deg"))
+    except Exception as exc:  # noqa: BLE001
+        print(f"[generate_data] failed to load {_DEFAULT_COT_JSON}: {exc}")
+        _refresh_cot_norm_cache()
+
+
+_try_load_cot_json()
+
+
+def _e_hat(slope_deg):
+    """Normalized CoT score ê ∈ [0, 1]."""
+    g = float(_g_cot_poly(slope_deg))
+    g_min = _G_COT_NORM_CACHE["g_min"]
+    g_max = _G_COT_NORM_CACHE["g_max"]
+    span = max((g_max - g_min) if (g_max is not None and g_min is not None) else 1.0,
+               1e-8)
+    return float(np.clip((g - (g_min if g_min is not None else 0.0)) / span,
+                         0.0, 1.0))
+
 
 def _calculate_paper_cot(slope_deg):
-    """4차 다항식 기반 CoT (Minetti et al.)."""
-    a, b, c, d, e = 6.19e-07, 3.72e-05, 1.14e-03, 2.37e-03, 0.44
-    return (a * slope_deg**4) + (b * slope_deg**3) + (c * slope_deg**2) + (d * slope_deg) + e
+    """[Backward compat] alias for the Go2 polynomial CoT."""
+    return _g_cot_poly(slope_deg)
 
-def _calculate_directional_cot(height_curr, height_next, distance, limit_angle_deg=35.0):
-    """이동 방향 기반 CoT. 등반 불가 시 np.inf."""
+
+def _cot_floor():
+    """Minimum CoT over the configured slope band (for directional clamp)."""
+    gmn = _G_COT_NORM_CACHE.get("g_min")
+    if gmn is not None:
+        return float(gmn)
+    return float(COT_POLY_COEFFS["e"])
+
+
+def _calculate_directional_cot(height_curr, height_next, distance, limit_angle_deg=None):
+    """Edge-level CoT (i→j). Returns ∞ if implied slope exceeds the limit."""
+    if limit_angle_deg is None:
+        limit_angle_deg = SLOPE_LIMIT_DEG
     height_diff = height_next - height_curr
     slope_deg = np.degrees(np.arctan2(height_diff, distance))
     if abs(slope_deg) >= limit_angle_deg:
         return np.inf
-    cot = _calculate_paper_cot(slope_deg)
-    return max(cot, 0.1)
+    cot = float(_g_cot_poly(slope_deg))
+    return max(cot, _cot_floor())
 
 
 # ============================================================================
-# Risk_{ij} 계산
+# Risk (slope safety) — raw and normalized
 # ============================================================================
 
-def _calculate_risk(slope_rad_j, risk_threshold_deg=15.0):
-    """Slope-based soft safety cost.
+def _calculate_risk(slope_rad_j, risk_threshold_deg=None):
+    """[Backward compat] Raw risk = max(0, slope_deg - τ_R) in degrees.
 
-    Risk_{ij} = max(0, slope_deg(v_j) - τ_risk)
+    For the new normalized step cost, prefer ``_R_hat()``.
     """
+    if risk_threshold_deg is None:
+        risk_threshold_deg = RISK_THRESHOLD_DEG_DEFAULT
     slope_deg_j = np.degrees(slope_rad_j)
-    return max(0.0, slope_deg_j - risk_threshold_deg)
+    return float(max(0.0, slope_deg_j - risk_threshold_deg))
+
+
+def _R_hat(slope_rad_j, risk_threshold_deg=None, slope_limit_deg=None):
+    """Normalized risk R̂ ∈ [0, 1]."""
+    if risk_threshold_deg is None:
+        risk_threshold_deg = RISK_THRESHOLD_DEG_DEFAULT
+    if slope_limit_deg is None:
+        slope_limit_deg = SLOPE_LIMIT_DEG
+    s_deg = abs(np.degrees(slope_rad_j))
+    span = max(slope_limit_deg - risk_threshold_deg, 1e-6)
+    return float(np.clip((s_deg - risk_threshold_deg) / span, 0.0, 1.0))
 
 
 # ============================================================================
-# IntentPenalty_{ij} 계산
+# Lateral reference (deterministic straight start→goal line)
 # ============================================================================
+# Replaces the v1 baseline-A* dependency for left/right/center intents,
+# removing the chicken-and-egg problem (lateral reference depended on the
+# very baseline path that was supposed to differ across intents).
 
-def _precompute_side_bias(start, goal, img_size):
-    """start→goal 방향 기준 좌/우 판별용 벡터 사전 계산.
+# Half-corridor (in pixels) used to normalize signed perpendicular offsets
+# for lateral intents. Override at runtime via set_lateral_corridor().
+LATERAL_HALF_CORRIDOR_PIXELS = 30.0
 
-    시각화에서 origin='lower' (row↑=화면↑)이므로,
-    시각적 좌표계(right-handed)에서의 90° CCW 회전:
-      visual forward = (dc, dr),  visual left = (-dr, dc)
-      → (row,col) 형식: left_r = dc/norm, left_c = -dr/norm
 
-    반환: dict(side reference) 또는 None (start==goal).
+def set_lateral_corridor(half_corridor_pixels):
+    global LATERAL_HALF_CORRIDOR_PIXELS
+    LATERAL_HALF_CORRIDOR_PIXELS = float(half_corridor_pixels)
+
+
+def _straight_line_reference(start, goal):
+    """Pre-compute the straight start→goal reference for lateral intents.
+
+    Returns dict with unit forward / left vectors in (row, col) frame, or
+    None if start == goal. The "left" perpendicular matches the visual
+    coordinate system used elsewhere (origin='lower'): visual forward
+    = (dc, dr), CCW left = (-dr, dc) → (row,col) form left_r = fwd_c,
+    left_c = -fwd_r.
     """
-    dr = goal[0] - start[0]
-    dc = goal[1] - start[1]
+    sr, sc = start
+    gr, gc = goal
+    dr = gr - sr
+    dc = gc - sc
     norm = np.hypot(dr, dc)
     if norm < 1e-6:
         return None
-    left_r = dc / norm
-    left_c = -dr / norm
-    half_range = img_size / 2.0
+    fwd_r = dr / norm
+    fwd_c = dc / norm
     return {
-        "left_r": left_r,
-        "left_c": left_c,
-        "half_range": half_range,
-        "ref_start": start,
+        "start": (sr, sc),
+        "fwd_r": float(fwd_r), "fwd_c": float(fwd_c),
+        "left_r": float(fwd_c), "left_c": float(-fwd_r),
+        "length": float(norm),
+    }
+
+
+def _signed_perpendicular_offset(node, ref):
+    """Signed perpendicular offset (in pixels, positive = left of forward dir)."""
+    if ref is None:
+        return 0.0
+    rel_r = node[0] - ref["start"][0]
+    rel_c = node[1] - ref["start"][1]
+    return float(rel_r * ref["left_r"] + rel_c * ref["left_c"])
+
+
+# ----- Backward-compatible wrappers (used by experiment/core/metrics.py) -----
+
+def _precompute_side_bias(start, goal, img_size):
+    """[Backward compat] returns the legacy side-bias dict shape, but the
+    underlying reference is the deterministic straight start→goal line."""
+    ref = _straight_line_reference(start, goal)
+    if ref is None:
+        return None
+    return {
+        "left_r": ref["left_r"],
+        "left_c": ref["left_c"],
+        "half_range": float(img_size) / 2.0,
+        "ref_start": ref["start"],
     }
 
 
 def _signed_offset_from_baseline(node_j, baseline_points):
-    """Return signed lateral offset (pixels) from nearest baseline segment.
+    """[Backward compat] signed lateral offset from a discrete baseline.
 
-    Positive means left of local baseline tangent in (row, col) coordinates.
+    Kept only for legacy ablations that pass an explicit baseline curve;
+    new code should rely on _straight_line_reference instead.
     """
     if baseline_points is None or len(baseline_points) < 2:
         return 0.0
@@ -161,7 +353,7 @@ def _signed_offset_from_baseline(node_j, baseline_points):
     k = int(np.argmin(d2))
     i0 = max(0, k - 1)
     i1 = min(len(pts) - 1, k + 1)
-    t = pts[i1] - pts[i0]  # local tangent in (row, col)
+    t = pts[i1] - pts[i0]
     norm = float(np.hypot(t[0], t[1]))
     if norm < 1e-6:
         return 0.0
@@ -171,104 +363,103 @@ def _signed_offset_from_baseline(node_j, baseline_points):
     return float(rel[0] * left_r + rel[1] * left_c)
 
 
+# ============================================================================
+# Intent score Î ∈ [0, 1]  (penalty intents only; modulators contribute 0)
+# ============================================================================
+
+def _I_atomic(intent, node_j, prev_node, slope_map_rad, height_map,
+              params, ref):
+    """Atomic per-intent score Î ∈ [0, 1]. Modulator/unknown intents → 0."""
+    if intent not in PENALTY_INTENTS:
+        return 0.0
+
+    # ---- Lateral intents (deterministic straight start→goal line) ----
+    if intent in ("left_bias", "right_bias", "center_bias"):
+        if ref is None:
+            return 0.0
+        proj = _signed_perpendicular_offset(node_j, ref)
+        u = proj / max(LATERAL_HALF_CORRIDOR_PIXELS, 1e-6)  # +left, -right
+        if intent == "left_bias":
+            # higher score (worse) when on the right (u < 0)
+            return float(np.clip(0.5 - 0.5 * u, 0.0, 1.0))
+        if intent == "right_bias":
+            return float(np.clip(0.5 + 0.5 * u, 0.0, 1.0))
+        # center_bias: penalty grows with |offset|
+        return float(np.clip(abs(u), 0.0, 1.0))
+
+    # ---- Slope-based intents ----
+    r, c = node_j
+    s_deg = float(np.degrees(slope_map_rad[r, c]))
+
+    if intent == "avoid_steep":
+        tau = float(params.get("tau_steep_deg", 20.0))
+        span = max(SLOPE_LIMIT_DEG - tau, 1e-6)
+        return float(np.clip((s_deg - tau) / span, 0.0, 1.0))
+
+    if intent == "prefer_flat":
+        return float(np.clip(abs(s_deg) / max(SLOPE_LIMIT_DEG, 1e-6), 0.0, 1.0))
+
+    if intent == "minimize_elevation_change":
+        # Edge-level Δh (differs from prefer_flat: focuses on cumulative climb).
+        if prev_node is None or height_map is None:
+            return 0.0
+        pr, pc = prev_node
+        delta_h = abs(float(height_map[r, c]) - float(height_map[pr, pc]))
+        # Normalization: max plausible Δh per single edge step
+        # = tan(s_lim) * (sqrt(2) * pixel_size) — with pixel_size ≈ 1 here
+        # because slope_map is computed with a fixed pixel_resolution upstream.
+        delta_h_max = max(np.tan(np.radians(SLOPE_LIMIT_DEG)) * np.sqrt(2.0), 1e-6)
+        return float(np.clip(delta_h / delta_h_max, 0.0, 1.0))
+
+    return 0.0
+
+
 def _calculate_intent_penalty(intent_type, intent_params, node_j, img_size,
-                               slope_map_rad, side_info=None):
-    """IntentPenalty_{ij} 계산. compositional intent는 '+' 구분자로 합산."""
+                              slope_map_rad, side_info=None,
+                              prev_node=None, height_map=None,
+                              ref=None):
+    """Î_total ∈ [0, 1] for the intent at node_j.
+
+    Composites combine atomic scores via mean (soft-AND of partial
+    satisfactions). Pure modulator intents (e.g. ``short_path``,
+    ``energy_efficient``) return 0 — they only modulate (α, β) at planner
+    setup time, not the per-step δ·Î term.
+    """
     if intent_type == "baseline":
         return 0.0
-    if "+" in intent_type:
-        total = 0.0
-        for sub in intent_type.split("+"):
-            total += _single_intent_penalty(sub, intent_params, node_j,
-                                            img_size, slope_map_rad, side_info)
-        return total
-    return _single_intent_penalty(intent_type, intent_params, node_j,
-                                  img_size, slope_map_rad, side_info)
+
+    # Resolve reference: prefer new ref; otherwise reconstruct from legacy side_info.
+    if ref is None and isinstance(side_info, dict):
+        if "start" in side_info and "fwd_r" in side_info:
+            ref = side_info
+        elif "ref_start" in side_info and "left_r" in side_info:
+            ref = {
+                "start": side_info["ref_start"],
+                "left_r": float(side_info["left_r"]),
+                "left_c": float(side_info["left_c"]),
+                "fwd_r": float(-side_info["left_c"]),
+                "fwd_c": float(side_info["left_r"]),
+                "length": float(side_info.get("half_range", 1.0)) * 2.0,
+            }
+
+    parts = intent_type.split("+")
+    penalty_parts = [p for p in parts if p in PENALTY_INTENTS]
+    if not penalty_parts:
+        return 0.0
+
+    scores = [
+        _I_atomic(sub, node_j, prev_node, slope_map_rad,
+                  height_map, intent_params or {}, ref)
+        for sub in penalty_parts
+    ]
+    return float(np.mean(scores))
 
 
 def _single_intent_penalty(intent_type, params, node_j, img_size,
-                            slope_map_rad, side_info=None):
-    """단일 intent에 대한 penalty.
-
-    - left_bias:    start→goal 이동 방향 기준 오른쪽일수록 penalty ↑
-    - right_bias:   start→goal 이동 방향 기준 왼쪽일수록 penalty ↑
-    - avoid_steep:  λ_steep · max(0, S - τ)   (급경사 회피)
-    - prefer_flat:  λ_flat · S(v_j)           (slope 비례 penalty)
-    """
-    r, c = node_j
-
-    if intent_type in ("left_bias", "right_bias"):
-        if side_info is None:
-            return 0.0
-        if isinstance(side_info, dict) and side_info.get("baseline_points") is not None:
-            proj = _signed_offset_from_baseline((r, c), side_info.get("baseline_points"))
-            half_range = float(side_info.get("half_range", img_size / 2.0))
-        else:
-            left_r = side_info["left_r"] if isinstance(side_info, dict) else side_info[0]
-            left_c = side_info["left_c"] if isinstance(side_info, dict) else side_info[1]
-            half_range = side_info["half_range"] if isinstance(side_info, dict) else side_info[2]
-            ref_start = side_info["ref_start"] if isinstance(side_info, dict) else side_info[3]
-            proj = (r - ref_start[0]) * left_r + (c - ref_start[1]) * left_c
-        u_perp = np.clip(0.5 - proj / (2.0 * half_range), 0.0, 1.0)
-        lam = params.get("lambda_side", 3.0)
-        if intent_type == "left_bias":
-            return lam * u_perp
-        return lam * (1.0 - u_perp)
-
-    if intent_type == "avoid_steep":
-        slope_deg_j = np.degrees(slope_map_rad[r, c])
-        tau = params.get("tau_steep", 20.0)
-        lam = params.get("lambda_steep", 5.0)
-        return lam * max(0.0, slope_deg_j - tau)
-
-    if intent_type == "prefer_flat":
-        slope_deg_j = np.degrees(slope_map_rad[r, c])
-        return params.get("lambda_flat", 1.0) * slope_deg_j
-
-    if intent_type == "center_bias":
-        if side_info is None:
-            return 0.0
-        if isinstance(side_info, dict) and side_info.get("baseline_points") is not None:
-            proj = _signed_offset_from_baseline((r, c), side_info.get("baseline_points"))
-            half_range = float(side_info.get("half_range", img_size / 2.0))
-        else:
-            left_r = side_info["left_r"] if isinstance(side_info, dict) else side_info[0]
-            left_c = side_info["left_c"] if isinstance(side_info, dict) else side_info[1]
-            half_range = side_info["half_range"] if isinstance(side_info, dict) else side_info[2]
-            ref_start = side_info["ref_start"] if isinstance(side_info, dict) else side_info[3]
-            proj = (r - ref_start[0]) * left_r + (c - ref_start[1]) * left_c
-        u = proj / max(2.0 * half_range, 1e-6)
-        lam = params.get("lambda_center", 5.0)
-        return lam * abs(u)
-
-    if intent_type == "minimize_elevation_change":
-        slope_deg_j = np.degrees(slope_map_rad[r, c])
-        lam = params.get("lambda_elev", 0.08)
-        return lam * (slope_deg_j ** 2) / 100.0
-
-    if intent_type == "short_path":
-        if side_info is None:
-            return 0.0
-        if isinstance(side_info, dict) and side_info.get("baseline_points") is not None:
-            proj = _signed_offset_from_baseline((r, c), side_info.get("baseline_points"))
-            half_range = float(side_info.get("half_range", img_size / 2.0))
-        else:
-            left_r = side_info["left_r"] if isinstance(side_info, dict) else side_info[0]
-            left_c = side_info["left_c"] if isinstance(side_info, dict) else side_info[1]
-            half_range = side_info["half_range"] if isinstance(side_info, dict) else side_info[2]
-            ref_start = side_info["ref_start"] if isinstance(side_info, dict) else side_info[3]
-            proj = (r - ref_start[0]) * left_r + (c - ref_start[1]) * left_c
-        u = abs(proj) / max(2.0 * half_range, 1e-6)
-        lam = params.get("lambda_detour", 4.0)
-        return lam * (u ** 2)
-
-    if intent_type == "energy_efficient":
-        slope_deg_j = np.degrees(slope_map_rad[r, c])
-        cot = _calculate_paper_cot(slope_deg_j)
-        lam = params.get("lambda_energy", 0.12)
-        return lam * max(cot, 0.0)
-
-    return 0.0
+                           slope_map_rad, side_info=None):
+    """[Backward compat] thin wrapper over the new _calculate_intent_penalty."""
+    return _calculate_intent_penalty(intent_type, params, node_j, img_size,
+                                     slope_map_rad, side_info=side_info)
 
 
 # ============================================================================
@@ -279,34 +470,46 @@ def _a_star_intent_search(slope_map, height_map, start, goal,
                           limit_angle_rad, max_iterations,
                           pixel_resolution=0.5,
                           alpha=1.0, beta=0.8, gamma=0.1, delta=1.0,
-                          risk_threshold_deg=15.0,
+                          risk_threshold_deg=None,
                           intent_type="baseline", intent_params=None,
-                          side_info=None):
-    """4-term cost A*.
+                          side_info=None, ref=None):
+    """A* over a normalized 4-term step cost (each term ∈ [0, 1]):
 
-    c_{ij} = α·d_{ij} + β·CoT_{ij}·d_{ij} + γ·Risk_{ij} + δ·IntentPenalty_{ij}
+        ĉ_ij = α · d̂_ij  +  β · ê(s_j) · d̂_ij  +  γ · R̂(s_j)  +  δ · Î_j(intent)
+
+    where d̂ = real_d / d_max, ê = (g(s) - g_min) / (g_max - g_min),
+    R̂ = clip((|s| - τ_R) / (s_lim - τ_R), 0, 1), Î ∈ [0, 1] from
+    _calculate_intent_penalty().
     """
     if intent_params is None:
         intent_params = {}
+    if risk_threshold_deg is None:
+        risk_threshold_deg = RISK_THRESHOLD_DEG_DEFAULT
 
     rows, cols = height_map.shape
     start, goal = tuple(start), tuple(goal)
-    limit_angle_deg = np.degrees(limit_angle_rad)
+    limit_angle_deg = float(np.degrees(limit_angle_rad))
 
     if slope_map[start] >= limit_angle_rad or slope_map[goal] >= limit_angle_rad:
         return None
 
-    if side_info is None:
-        side_info = _precompute_side_bias(start, goal, rows)
+    # Lateral reference: use the deterministic straight start→goal line.
+    if ref is None:
+        ref = _straight_line_reference(start, goal)
 
     map_size = rows * cols
     if max_iterations < map_size * 10:
         max_iterations = int(map_size * 10)
 
-    h_scale = alpha * 0.1
+    d_max = float(np.sqrt(2.0) * pixel_resolution)
+    g_min = _G_COT_NORM_CACHE["g_min"] or 0.0
+    g_max = _G_COT_NORM_CACHE["g_max"] or 1.0
+    e_span = max(g_max - g_min, 1e-8)
 
+    # Admissible heuristic: α · D(n, goal) / d_max  (normalized distance only).
     def heuristic(a, b):
-        return np.hypot(a[0] - b[0], a[1] - b[1]) * pixel_resolution * h_scale
+        D = np.hypot(a[0] - b[0], a[1] - b[1]) * pixel_resolution
+        return alpha * (D / d_max)
 
     open_heap = [(heuristic(start, goal), 0, start)]
     came_from = {}
@@ -337,26 +540,29 @@ def _a_star_intent_search(slope_map, height_map, start, goal,
 
             pixel_d = np.sqrt(2.0) if (dr != 0 and dc != 0) else 1.0
             real_d = pixel_d * pixel_resolution
+            d_hat = real_d / d_max
 
-            cot = _calculate_directional_cot(
+            cot_raw = _calculate_directional_cot(
                 height_map[cr, cc], height_map[nr, nc], real_d, limit_angle_deg
             )
-            if np.isinf(cot) or slope_map[nr, nc] >= limit_angle_rad:
+            if np.isinf(cot_raw) or slope_map[nr, nc] >= limit_angle_rad:
                 continue
             if abs(dr) + abs(dc) == 2:
                 if (slope_map[cr + dr, cc] >= limit_angle_rad or
                         slope_map[cr, cc + dc] >= limit_angle_rad):
                     continue
 
-            risk = _calculate_risk(slope_map[nr, nc], risk_threshold_deg)
-            intent_pen = _calculate_intent_penalty(
-                intent_type, intent_params, (nr, nc), rows, slope_map, side_info
+            e_hat = float(np.clip((cot_raw - g_min) / e_span, 0.0, 1.0))
+            r_hat = _R_hat(slope_map[nr, nc], risk_threshold_deg, limit_angle_deg)
+            i_hat = _calculate_intent_penalty(
+                intent_type, intent_params, (nr, nc), rows, slope_map,
+                ref=ref, prev_node=current, height_map=height_map,
             )
 
-            step_cost = (alpha * real_d
-                         + beta * cot * real_d
-                         + gamma * risk
-                         + delta * intent_pen)
+            step_cost = (alpha * d_hat
+                         + beta * e_hat * d_hat
+                         + gamma * r_hat
+                         + delta * i_hat)
 
             g_new = g_score[cr, cc] + step_cost
             if g_new < g_score[nr, nc]:
@@ -439,41 +645,46 @@ class SlopeCotGenerator:
 
     def find_path_with_intent(self, start, goal,
                               alpha=1.0, beta=0.8, gamma=0.1, delta=1.0,
-                              risk_threshold_deg=15.0,
+                              risk_threshold_deg=None,
                               intent_type="baseline", intent_params=None):
-        """intent 기반 경로 탐색."""
+        """Plan an intent-conditioned path with the v2 normalized cost.
+
+        Two intent classes are handled here:
+
+        * **Penalty intents** (left_bias / right_bias / center_bias /
+          avoid_steep / prefer_flat / minimize_elevation_change) contribute to
+          the δ·Î term inside A*; they all use the deterministic straight
+          start→goal line as their lateral reference (no chicken-and-egg
+          dependency on a baseline A* call).
+
+        * **Weight modulators** (short_path, energy_efficient) instead scale
+          the base (α, β) before A* runs and contribute 0 to δ·Î. Their
+          intuition (“take a shorter route”, “prefer low-energy ground”) is
+          encoded directly in the cost weights rather than as an extra
+          penalty term.
+        """
         if self.height_map is None or self.slope_map is None:
             raise RuntimeError("generate()를 먼저 호출하세요.")
+        if risk_threshold_deg is None:
+            risk_threshold_deg = RISK_THRESHOLD_DEG_DEFAULT
 
-        side_info = _precompute_side_bias(start, goal, self.img_size)
-        intent_parts = set(intent_type.split("+"))
-        uses_lateral = bool(intent_parts & {"left_bias", "right_bias", "center_bias", "short_path"})
-        # For lateral intents, anchor left/right/center to the baseline route
-        # rather than a single straight start->goal line.
-        if uses_lateral and intent_type != "baseline":
-            baseline_path = _a_star_intent_search(
-                self.slope_map, self.height_map, start, goal,
-                self.limit_angle, self.max_iterations,
-                pixel_resolution=self.pixel_resolution,
-                alpha=alpha, beta=beta, gamma=gamma, delta=0.0,
-                risk_threshold_deg=risk_threshold_deg,
-                intent_type="baseline",
-                intent_params={},
-                side_info=side_info,
-            )
-            if baseline_path is not None and len(baseline_path) >= 2 and side_info is not None:
-                side_info = dict(side_info)
-                side_info["baseline_points"] = np.array(baseline_path, dtype=np.float32)
+        a_eff, b_eff = float(alpha), float(beta)
+        for sub in intent_type.split("+"):
+            mod = WEIGHT_MODULATORS.get(sub)
+            if mod is not None:
+                a_eff *= mod.get("alpha_mult", 1.0)
+                b_eff *= mod.get("beta_mult", 1.0)
 
+        ref = _straight_line_reference(start, goal)
         return _a_star_intent_search(
             self.slope_map, self.height_map, start, goal,
             self.limit_angle, self.max_iterations,
             pixel_resolution=self.pixel_resolution,
-            alpha=alpha, beta=beta, gamma=gamma, delta=delta,
+            alpha=a_eff, beta=b_eff, gamma=gamma, delta=delta,
             risk_threshold_deg=risk_threshold_deg,
             intent_type=intent_type,
             intent_params=intent_params or {},
-            side_info=side_info,
+            ref=ref,
         )
 
 
@@ -589,6 +800,17 @@ def generate_terrain_data(
             itype = intent_def["type"]
             iparams = dict(intent_def["params"])
 
+            # Resolve effective (α, β) after applying weight modulators —
+            # we record the *applied* values for reproducibility.
+            a_eff, b_eff = float(alpha), float(beta)
+            modulators = []
+            for sub in itype.split("+"):
+                mod = WEIGHT_MODULATORS.get(sub)
+                if mod is not None:
+                    a_eff *= mod.get("alpha_mult", 1.0)
+                    b_eff *= mod.get("beta_mult", 1.0)
+                    modulators.append({"intent": sub, **mod})
+
             path_pixels = gen.find_path_with_intent(
                 start, goal,
                 alpha=alpha, beta=beta, gamma=gamma, delta=delta,
@@ -609,8 +831,18 @@ def generate_terrain_data(
             pseudo_label = {
                 "intent_type": itype,
                 "intent_params": iparams,
-                "cost_weights": {"alpha": alpha, "beta": beta, "gamma": gamma, "delta": delta},
-                "risk_threshold_deg": risk_threshold_deg,
+                "cost_weights_base": {
+                    "alpha": float(alpha), "beta": float(beta),
+                    "gamma": float(gamma), "delta": float(delta),
+                },
+                "cost_weights_effective": {
+                    "alpha": float(a_eff), "beta": float(b_eff),
+                    "gamma": float(gamma), "delta": float(delta),
+                },
+                "modulators_applied": modulators,
+                "risk_threshold_deg": float(risk_threshold_deg),
+                "cot_model": {"model": "poly4_deg", **dict(COT_POLY_COEFFS)},
+                "slope_limit_deg": float(SLOPE_LIMIT_DEG),
             }
 
             paths_data.append({

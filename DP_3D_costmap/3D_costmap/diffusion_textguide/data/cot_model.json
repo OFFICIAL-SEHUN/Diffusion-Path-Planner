@@ -1,0 +1,40 @@
+{
+  "model": "poly4_deg",
+  "description": "Isaac Lab Unitree Go2 \u2014 CoT vs slope (measured Table 2), 4th-degree polynomial via np.polyfit (CoT-Regression).",
+  "coefficients": {
+    "a": 6.191142191142198e-07,
+    "b": 3.7195027195027275e-05,
+    "c": 0.001136995337995338,
+    "d": 0.00236866744366744,
+    "e": 0.44359743589743594
+  },
+  "normalization": {
+    "slope_limit_deg": 25.0,
+    "g_min": 0.4423243879219869,
+    "g_max": 2.036450000000001
+  },
+  "measurements_deg": [
+    -25.0,
+    -20.0,
+    -15.0,
+    -10.0,
+    -5.0,
+    0.0,
+    5.0,
+    10.0,
+    15.0,
+    20.0
+  ],
+  "measurements_cot": [
+    0.74,
+    0.6803,
+    0.5805,
+    0.4921,
+    0.4201,
+    0.4324,
+    0.4848,
+    0.7792,
+    0.7246,
+    1.3935
+  ]
+}

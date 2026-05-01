@@ -3,7 +3,7 @@
 # =============================================================================
 # ViT-Tiny: same blocks below; use `configs/vit_tiny.yaml` (timm `vit_tiny_patch16_224`).
 # Usage:
-#   python train.py --config configs/swin.yaml --data-dir data/raw
+#   python train.py --config configs/swin.yaml --data-dir data/raw --val-dir data/valid
 # Notes:
 #   - Training reads existing .pt files from --data-dir.
 #   - In `data`, only img_size/horizon are directly consumed by training.

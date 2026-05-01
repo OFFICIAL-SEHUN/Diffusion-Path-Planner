@@ -55,7 +55,7 @@ training:
   epochs: 5000
   batch_size: 128
   learning_rate: 0.00003
-  checkpoint_dir: "checkpoints/efficientnet_b0"
+  checkpoint_dir: "checkpoints/efficientnet_b0_pretrained"
   model_name: "diffusion_textguide_efficientnet_b0.pt"
   log_interval: 1000
   use_amp: true

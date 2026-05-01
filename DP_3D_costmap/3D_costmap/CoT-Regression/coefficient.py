@@ -1,3 +1,8 @@
+"""Quick polyfit printout for Table 2.
+
+Canonical pipeline (fit + plot + export ``cot_model.json``):
+``python3 DP_3D_costmap/3D_costmap/CoT-Regression/Planetary_CoT.py``
+"""
 import numpy as np
 
 # 1. 논문 그래프에서 읽은 실제 데이터 (x: 경사도, y: CoT)

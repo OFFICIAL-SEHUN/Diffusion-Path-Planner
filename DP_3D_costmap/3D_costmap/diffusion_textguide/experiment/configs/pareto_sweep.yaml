@@ -26,7 +26,7 @@ terrain:
   pixel_resolution: 0.5
   max_iterations: 20000
 
-# 3 × 4 × 4 × 4 = 192 combos (× 30 terrains × 12 intents)
+# 3 × 4 × 4 × 4 = 192 combos (× 30 terrains × 10 intents)
 sweep:
   # α: geodesic distance weight (baseline; α=0 → degenerate, α=1 = unit reference)
   alpha: [0.5, 1.0, 2.0]
@@ -37,7 +37,7 @@ sweep:
   gamma: [0.0, 0.5, 1.0, 2.0]
   # δ: intent penalty weight. δ가 클수록 의도 추종 강함.
   # penalty intents가 path를 휘게 만들려면 α·d̂보다 충분히 커야 의미.
-  delta: [0.5, 1.0, 2.0, 4.0]
+  delta: [2.0, 4.0, 6.0, 8.0]
 
 # Mirrors scripts/generate_data.py INTENT_CATALOG (keep in sync).
 intents:
@@ -47,12 +47,10 @@ intents:
   - center_bias
   - avoid_steep
   - prefer_flat
-  - short_path
   - energy_efficient
   - left_bias+avoid_steep
   - right_bias+prefer_flat
   - center_bias+prefer_flat
-  - short_path+avoid_steep
 
 horizon: 120
 risk_threshold_deg: 15.0

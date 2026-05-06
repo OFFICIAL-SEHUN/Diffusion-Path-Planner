@@ -4,7 +4,529 @@
     "feasibility_min_per_intent": 0.9,
     "isr_min_per_intent": 0.7
   },
-  "num_candidates_passing": 0,
-  "best": null,
-  "top5": []
+  "num_candidates_passing": 149,
+  "best": {
+    "alpha": 0.5,
+    "beta": 2.0,
+    "gamma": 1.0,
+    "delta": 2.0,
+    "min_feasibility": 1.0,
+    "min_isr": 0.7382787129531304,
+    "mean_isr": 0.893205135203163,
+    "mean_cot": 24.488675267123742,
+    "mean_risk": 13.792937666575117,
+    "per_intent": {
+      "baseline": {
+        "feasibility": 1.0,
+        "isr_mean": 1.0,
+        "cot_mean": 21.679073112093818,
+        "risk_mean": 6.891377099355062,
+        "mean_slope_mean": 8.889066712061565
+      },
+      "left_bias": {
+        "feasibility": 1.0,
+        "isr_mean": 0.9675,
+        "cot_mean": 32.21692705902408,
+        "risk_mean": 19.503990840911865,
+        "mean_slope_mean": 9.157138268152872
+      },
+      "right_bias": {
+        "feasibility": 1.0,
+        "isr_mean": 0.971388888888889,
+        "cot_mean": 31.35773099043797,
+        "risk_mean": 17.121166801452638,
+        "mean_slope_mean": 9.204051733016968
+      },
+      "center_bias": {
+        "feasibility": 1.0,
+        "isr_mean": 0.7382787129531304,
+        "cot_mean": 22.263097564451428,
+        "risk_mean": 33.47657270431519,
+        "mean_slope_mean": 9.545482794443766
+      },
+      "avoid_steep": {
+        "feasibility": 1.0,
+        "isr_mean": 0.9980555555555557,
+        "cot_mean": 21.679073112093818,
+        "risk_mean": 6.891377099355062,
+        "mean_slope_mean": 8.889066712061565
+      },
+      "prefer_flat": {
+        "feasibility": 1.0,
+        "isr_mean": 0.8676200690092862,
+        "cot_mean": 23.162883839445154,
+        "risk_mean": 8.253127574920654,
+        "mean_slope_mean": 5.957096894582112
+      },
+      "energy_efficient": {
+        "feasibility": 1.0,
+        "isr_mean": 0.9719852215015167,
+        "cot_mean": 22.411822798786705,
+        "risk_mean": 8.650214513142904,
+        "mean_slope_mean": 8.642580445607503
+      },
+      "left_bias+avoid_steep": {
+        "feasibility": 1.0,
+        "isr_mean": 0.8849994202936504,
+        "cot_mean": 24.23930499949705,
+        "risk_mean": 9.0189910252889,
+        "mean_slope_mean": 8.708641179402669
+      },
+      "right_bias+prefer_flat": {
+        "feasibility": 1.0,
+        "isr_mean": 0.7476571895434266,
+        "cot_mean": 23.621042659722626,
+        "risk_mean": 11.016649850209554,
+        "mean_slope_mean": 7.151952155431112
+      },
+      "center_bias+prefer_flat": {
+        "feasibility": 1.0,
+        "isr_mean": 0.7845662942861744,
+        "cot_mean": 22.255796535684738,
+        "risk_mean": 17.105909156799317,
+        "mean_slope_mean": 7.9186067899068195
+      }
+    },
+    "utopia_distance": 0.6376338381652302,
+    "norm_cot": 0.640643554553437,
+    "norm_risk": 0.9018438022742009,
+    "norm_isr": 0.4825009975494173
+  },
+  "top5": [
+    {
+      "alpha": 0.5,
+      "beta": 2.0,
+      "gamma": 1.0,
+      "delta": 2.0,
+      "min_feasibility": 1.0,
+      "min_isr": 0.7382787129531304,
+      "mean_isr": 0.893205135203163,
+      "mean_cot": 24.488675267123742,
+      "mean_risk": 13.792937666575117,
+      "per_intent": {
+        "baseline": {
+          "feasibility": 1.0,
+          "isr_mean": 1.0,
+          "cot_mean": 21.679073112093818,
+          "risk_mean": 6.891377099355062,
+          "mean_slope_mean": 8.889066712061565
+        },
+        "left_bias": {
+          "feasibility": 1.0,
+          "isr_mean": 0.9675,
+          "cot_mean": 32.21692705902408,
+          "risk_mean": 19.503990840911865,
+          "mean_slope_mean": 9.157138268152872
+        },
+        "right_bias": {
+          "feasibility": 1.0,
+          "isr_mean": 0.971388888888889,
+          "cot_mean": 31.35773099043797,
+          "risk_mean": 17.121166801452638,
+          "mean_slope_mean": 9.204051733016968
+        },
+        "center_bias": {
+          "feasibility": 1.0,
+          "isr_mean": 0.7382787129531304,
+          "cot_mean": 22.263097564451428,
+          "risk_mean": 33.47657270431519,
+          "mean_slope_mean": 9.545482794443766
+        },
+        "avoid_steep": {
+          "feasibility": 1.0,
+          "isr_mean": 0.9980555555555557,
+          "cot_mean": 21.679073112093818,
+          "risk_mean": 6.891377099355062,
+          "mean_slope_mean": 8.889066712061565
+        },
+        "prefer_flat": {
+          "feasibility": 1.0,
+          "isr_mean": 0.8676200690092862,
+          "cot_mean": 23.162883839445154,
+          "risk_mean": 8.253127574920654,
+          "mean_slope_mean": 5.957096894582112
+        },
+        "energy_efficient": {
+          "feasibility": 1.0,
+          "isr_mean": 0.9719852215015167,
+          "cot_mean": 22.411822798786705,
+          "risk_mean": 8.650214513142904,
+          "mean_slope_mean": 8.642580445607503
+        },
+        "left_bias+avoid_steep": {
+          "feasibility": 1.0,
+          "isr_mean": 0.8849994202936504,
+          "cot_mean": 24.23930499949705,
+          "risk_mean": 9.0189910252889,
+          "mean_slope_mean": 8.708641179402669
+        },
+        "right_bias+prefer_flat": {
+          "feasibility": 1.0,
+          "isr_mean": 0.7476571895434266,
+          "cot_mean": 23.621042659722626,
+          "risk_mean": 11.016649850209554,
+          "mean_slope_mean": 7.151952155431112
+        },
+        "center_bias+prefer_flat": {
+          "feasibility": 1.0,
+          "isr_mean": 0.7845662942861744,
+          "cot_mean": 22.255796535684738,
+          "risk_mean": 17.105909156799317,
+          "mean_slope_mean": 7.9186067899068195
+        }
+      },
+      "utopia_distance": 0.6376338381652302,
+      "norm_cot": 0.640643554553437,
+      "norm_risk": 0.9018438022742009,
+      "norm_isr": 0.4825009975494173
+    },
+    {
+      "alpha": 2.0,
+      "beta": 2.0,
+      "gamma": 2.0,
+      "delta": 6.0,
+      "min_feasibility": 1.0,
+      "min_isr": 0.7139219381327374,
+      "mean_isr": 0.8921782469170504,
+      "mean_cot": 24.1615946968167,
+      "mean_risk": 19.171232776641844,
+      "per_intent": {
+        "baseline": {
+          "feasibility": 1.0,
+          "isr_mean": 1.0,
+          "cot_mean": 21.67722858707803,
+          "risk_mean": 12.477930641174316,
+          "mean_slope_mean": 9.128935639063517
+        },
+        "left_bias": {
+          "feasibility": 1.0,
+          "isr_mean": 0.9650000000000003,
+          "cot_mean": 31.922783588232264,
+          "risk_mean": 25.2637464205424,
+          "mean_slope_mean": 9.403542153040569
+        },
+        "right_bias": {
+          "feasibility": 1.0,
+          "isr_mean": 0.9455555555555557,
+          "cot_mean": 31.255321215053705,
+          "risk_mean": 20.919248708089192,
+          "mean_slope_mean": 9.246750895182291
+        },
+        "center_bias": {
+          "feasibility": 1.0,
+          "isr_mean": 0.8076191615313292,
+          "cot_mean": 22.440893242300906,
+          "risk_mean": 44.62180411020915,
+          "mean_slope_mean": 9.671315813064576
+        },
+        "avoid_steep": {
+          "feasibility": 1.0,
+          "isr_mean": 0.9975000000000002,
+          "cot_mean": 21.68405231030279,
+          "risk_mean": 11.769471041361491,
+          "mean_slope_mean": 9.147356907526651
+        },
+        "prefer_flat": {
+          "feasibility": 1.0,
+          "isr_mean": 0.8643232578701442,
+          "cot_mean": 23.03874992793557,
+          "risk_mean": 9.936574618021647,
+          "mean_slope_mean": 6.105453395843506
+        },
+        "energy_efficient": {
+          "feasibility": 1.0,
+          "isr_mean": 0.9729011586098828,
+          "cot_mean": 21.679073112093818,
+          "risk_mean": 6.891377099355062,
+          "mean_slope_mean": 8.889066712061565
+        },
+        "left_bias+avoid_steep": {
+          "feasibility": 1.0,
+          "isr_mean": 0.8423739904699699,
+          "cot_mean": 22.704578324123272,
+          "risk_mean": 14.259761905670166,
+          "mean_slope_mean": 8.755518674850464
+        },
+        "right_bias+prefer_flat": {
+          "feasibility": 1.0,
+          "isr_mean": 0.7139219381327374,
+          "cot_mean": 22.835410611545186,
+          "risk_mean": 18.30303821563721,
+          "mean_slope_mean": 7.644770097732544
+        },
+        "center_bias+prefer_flat": {
+          "feasibility": 1.0,
+          "isr_mean": 0.812587407000884,
+          "cot_mean": 22.37785604950147,
+          "risk_mean": 27.26937500635783,
+          "mean_slope_mean": 8.29419501622518
+        }
+      },
+      "utopia_distance": 0.6424483180649277,
+      "norm_cot": 0.7038165175926067,
+      "norm_risk": 0.7887170068795356,
+      "norm_isr": 0.4704958140377531
+    },
+    {
+      "alpha": 0.5,
+      "beta": 1.0,
+      "gamma": 0.5,
+      "delta": 2.0,
+      "min_feasibility": 1.0,
+      "min_isr": 0.7618790747528212,
+      "mean_isr": 0.9008427242942032,
+      "mean_cot": 24.778789665306828,
+      "mean_risk": 20.808189735412594,
+      "per_intent": {
+        "baseline": {
+          "feasibility": 1.0,
+          "isr_mean": 1.0,
+          "cot_mean": 21.67172987115465,
+          "risk_mean": 10.07782475153605,
+          "mean_slope_mean": 9.01668349901835
+        },
+        "left_bias": {
+          "feasibility": 1.0,
+          "isr_mean": 0.9725000000000003,
+          "cot_mean": 33.539613170084166,
+          "risk_mean": 30.918445428212483,
+          "mean_slope_mean": 9.431283887227377
+        },
+        "right_bias": {
+          "feasibility": 1.0,
+          "isr_mean": 0.9611111111111111,
+          "cot_mean": 32.61497063608002,
+          "risk_mean": 30.093298149108886,
+          "mean_slope_mean": 9.542118660608928
+        },
+        "center_bias": {
+          "feasibility": 1.0,
+          "isr_mean": 0.7840451552222173,
+          "cot_mean": 22.386659445555047,
+          "risk_mean": 47.919562276204424,
+          "mean_slope_mean": 9.70800051689148
+        },
+        "avoid_steep": {
+          "feasibility": 1.0,
+          "isr_mean": 0.9975000000000002,
+          "cot_mean": 21.67172987115465,
+          "risk_mean": 10.07782475153605,
+          "mean_slope_mean": 9.01668349901835
+        },
+        "prefer_flat": {
+          "feasibility": 1.0,
+          "isr_mean": 0.866233866656268,
+          "cot_mean": 23.197775148243803,
+          "risk_mean": 9.722244230906169,
+          "mean_slope_mean": 6.019476000467936
+        },
+        "energy_efficient": {
+          "feasibility": 1.0,
+          "isr_mean": 0.972719782301274,
+          "cot_mean": 21.824174158980913,
+          "risk_mean": 9.192715708414713,
+          "mean_slope_mean": 8.583838907877604
+        },
+        "left_bias+avoid_steep": {
+          "feasibility": 1.0,
+          "isr_mean": 0.8932850686519084,
+          "cot_mean": 24.917343359988806,
+          "risk_mean": 15.168035475413005,
+          "mean_slope_mean": 9.059393151601155
+        },
+        "right_bias+prefer_flat": {
+          "feasibility": 1.0,
+          "isr_mean": 0.7618790747528212,
+          "cot_mean": 23.57149648079138,
+          "risk_mean": 16.47102845509847,
+          "mean_slope_mean": 7.339360666275025
+        },
+        "center_bias+prefer_flat": {
+          "feasibility": 1.0,
+          "isr_mean": 0.7991531842464326,
+          "cot_mean": 22.392404511034865,
+          "risk_mean": 28.44091812769572,
+          "mean_slope_mean": 8.222968673706054
+        }
+      },
+      "utopia_distance": 0.6452033837743911,
+      "norm_cot": 0.5846103082607991,
+      "norm_risk": 0.7542853345456546,
+      "norm_isr": 0.5717908062507356
+    },
+    {
+      "alpha": 1.0,
+      "beta": 2.0,
+      "gamma": 1.0,
+      "delta": 4.0,
+      "min_feasibility": 1.0,
+      "min_isr": 0.7618790747528212,
+      "mean_isr": 0.9008427242942032,
+      "mean_cot": 24.778789665306828,
+      "mean_risk": 20.808189735412594,
+      "per_intent": {
+        "baseline": {
+          "feasibility": 1.0,
+          "isr_mean": 1.0,
+          "cot_mean": 21.67172987115465,
+          "risk_mean": 10.07782475153605,
+          "mean_slope_mean": 9.01668349901835
+        },
+        "left_bias": {
+          "feasibility": 1.0,
+          "isr_mean": 0.9725000000000003,
+          "cot_mean": 33.539613170084166,
+          "risk_mean": 30.918445428212483,
+          "mean_slope_mean": 9.431283887227377
+        },
+        "right_bias": {
+          "feasibility": 1.0,
+          "isr_mean": 0.9611111111111111,
+          "cot_mean": 32.61497063608002,
+          "risk_mean": 30.093298149108886,
+          "mean_slope_mean": 9.542118660608928
+        },
+        "center_bias": {
+          "feasibility": 1.0,
+          "isr_mean": 0.7840451552222173,
+          "cot_mean": 22.386659445555047,
+          "risk_mean": 47.919562276204424,
+          "mean_slope_mean": 9.70800051689148
+        },
+        "avoid_steep": {
+          "feasibility": 1.0,
+          "isr_mean": 0.9975000000000002,
+          "cot_mean": 21.67172987115465,
+          "risk_mean": 10.07782475153605,
+          "mean_slope_mean": 9.01668349901835
+        },
+        "prefer_flat": {
+          "feasibility": 1.0,
+          "isr_mean": 0.866233866656268,
+          "cot_mean": 23.197775148243803,
+          "risk_mean": 9.722244230906169,
+          "mean_slope_mean": 6.019476000467936
+        },
+        "energy_efficient": {
+          "feasibility": 1.0,
+          "isr_mean": 0.972719782301274,
+          "cot_mean": 21.824174158980913,
+          "risk_mean": 9.192715708414713,
+          "mean_slope_mean": 8.583838907877604
+        },
+        "left_bias+avoid_steep": {
+          "feasibility": 1.0,
+          "isr_mean": 0.8932850686519084,
+          "cot_mean": 24.917343359988806,
+          "risk_mean": 15.168035475413005,
+          "mean_slope_mean": 9.059393151601155
+        },
+        "right_bias+prefer_flat": {
+          "feasibility": 1.0,
+          "isr_mean": 0.7618790747528212,
+          "cot_mean": 23.57149648079138,
+          "risk_mean": 16.47102845509847,
+          "mean_slope_mean": 7.339360666275025
+        },
+        "center_bias+prefer_flat": {
+          "feasibility": 1.0,
+          "isr_mean": 0.7991531842464326,
+          "cot_mean": 22.392404511034865,
+          "risk_mean": 28.44091812769572,
+          "mean_slope_mean": 8.222968673706054
+        }
+      },
+      "utopia_distance": 0.6452033837743911,
+      "norm_cot": 0.5846103082607991,
+      "norm_risk": 0.7542853345456546,
+      "norm_isr": 0.5717908062507356
+    },
+    {
+      "alpha": 0.5,
+      "beta": 0.0,
+      "gamma": 1.0,
+      "delta": 2.0,
+      "min_feasibility": 1.0,
+      "min_isr": 0.7852091938402903,
+      "mean_isr": 0.9084827152851089,
+      "mean_cot": 25.385082800563204,
+      "mean_risk": 16.30683321317037,
+      "per_intent": {
+        "baseline": {
+          "feasibility": 1.0,
+          "isr_mean": 1.0,
+          "cot_mean": 22.235209974346805,
+          "risk_mean": 8.113003094991049,
+          "mean_slope_mean": 9.062746222813924
+        },
+        "left_bias": {
+          "feasibility": 1.0,
+          "isr_mean": 0.9725000000000001,
+          "cot_mean": 34.38687802010701,
+          "risk_mean": 24.689373524983726,
+          "mean_slope_mean": 9.438452084859213
+        },
+        "right_bias": {
+          "feasibility": 1.0,
+          "isr_mean": 0.9747222222222226,
+          "cot_mean": 34.19568561840638,
+          "risk_mean": 25.61609042485555,
+          "mean_slope_mean": 9.511119492848714
+        },
+        "center_bias": {
+          "feasibility": 1.0,
+          "isr_mean": 0.8035958025604486,
+          "cot_mean": 22.54558133781929,
+          "risk_mean": 35.52687346140544,
+          "mean_slope_mean": 9.5994206905365
+        },
+        "avoid_steep": {
+          "feasibility": 1.0,
+          "isr_mean": 0.9977777777777779,
+          "cot_mean": 22.235209974346805,
+          "risk_mean": 8.113003094991049,
+          "mean_slope_mean": 9.062746222813924
+        },
+        "prefer_flat": {
+          "feasibility": 1.0,
+          "isr_mean": 0.8661222203572592,
+          "cot_mean": 23.27328258396397,
+          "risk_mean": 9.88360652923584,
+          "mean_slope_mean": 6.02450008392334
+        },
+        "energy_efficient": {
+          "feasibility": 1.0,
+          "isr_mean": 0.9721199811510838,
+          "cot_mean": 22.304015079133116,
+          "risk_mean": 5.33415158589681,
+          "mean_slope_mean": 8.92287654876709
+        },
+        "left_bias+avoid_steep": {
+          "feasibility": 1.0,
+          "isr_mean": 0.895546203401188,
+          "cot_mean": 26.582336343924435,
+          "risk_mean": 9.962236976623535,
+          "mean_slope_mean": 8.96228723526001
+        },
+        "right_bias+prefer_flat": {
+          "feasibility": 1.0,
+          "isr_mean": 0.7852091938402903,
+          "cot_mean": 23.618202233653445,
+          "risk_mean": 13.73344030380249,
+          "mean_slope_mean": 7.3357040087382
+        },
+        "center_bias+prefer_flat": {
+          "feasibility": 1.0,
+          "isr_mean": 0.8172337515408189,
+          "cot_mean": 22.474426839930764,
+          "risk_mean": 22.096553134918214,
+          "mean_slope_mean": 8.1797429561615
+        }
+      },
+      "utopia_distance": 0.6490025502121058,
+      "norm_cot": 0.4675096997211404,
+      "norm_risk": 0.8489666467215162,
+      "norm_isr": 0.6611086951717356
+    }
+  ]
 }

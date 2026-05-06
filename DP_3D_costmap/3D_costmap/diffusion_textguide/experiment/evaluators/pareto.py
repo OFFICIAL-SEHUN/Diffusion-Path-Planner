@@ -31,6 +31,7 @@ import json
 import os
 import sys
 from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import numpy as np
 import yaml
 import matplotlib
@@ -153,9 +154,6 @@ def run_sweep(cfg: dict):
     sw = cfg["sweep"]
     horizon = cfg["horizon"]
     risk_th = cfg["risk_threshold_deg"]
-    img_size = tc["img_size"]
-    px_res = tc["pixel_resolution"]
-    limit_deg = tc["limit_angle_deg"]
 
     terrains = _generate_terrains(cfg, cfg.get("seed", 42))
     print(f"Generated {len(terrains)} valid terrains")
@@ -165,87 +163,133 @@ def run_sweep(cfg: dict):
     ))
     print(f"Weight combinations: {len(weight_combos)}")
 
+    # Strip the non-picklable SlopeCotGenerator instance before sending to workers.
+    terrains_slim = [{k: v for k, v in t.items() if k != "gen"} for t in terrains]
+
+    num_workers = int(cfg.get("num_workers", os.cpu_count() or 1))
+    print(f"Parallelising over {num_workers} workers …")
+
+    combo_args = [
+        (a, b, g, d, terrains_slim, cfg["intents"], tc, horizon, risk_th)
+        for a, b, g, d in weight_combos
+    ]
+
     results = []
-    for a, b, g, d in tqdm(weight_combos, desc="Weight sweep"):
-        for intent_name in cfg["intents"]:
-            iparams = _intent_params_for(intent_name)
-            row = {
-                "alpha": a, "beta": b, "gamma": g, "delta": d,
-                "intent": intent_name,
-                "n_success": 0, "n_total": 0,
-                "cot_list": [], "risk_list": [], "mean_slope_list": [],
-                "max_slope_list": [], "length_m_list": [], "isr_list": [],
-            }
-            for ter in terrains:
-                gen = SlopeCotGenerator(
-                    img_size=img_size, height_range=tc["height_range"],
-                    mass=10.0, gravity=9.8,
-                    limit_angle_deg=limit_deg,
-                    max_iterations=tc["max_iterations"],
-                    pixel_resolution=px_res,
-                )
-                gen.height_map = ter["height_map"]
-                gen.slope_map = ter["slope_map_rad"]
-
-                path_px = gen.find_path_with_intent(
-                    ter["start"], ter["goal"],
-                    alpha=a, beta=b, gamma=g, delta=d,
-                    risk_threshold_deg=risk_th,
-                    intent_type=intent_name,
-                    intent_params=iparams,
-                )
-                baseline_px = None
-                if any(k in intent_name for k in ("center_bias", "left_bias", "right_bias")):
-                    baseline_px = gen.find_path_with_intent(
-                        ter["start"], ter["goal"],
-                        alpha=a, beta=b, gamma=g, delta=0.0,
-                        risk_threshold_deg=risk_th,
-                        intent_type="baseline",
-                        intent_params={},
-                    )
-                row["n_total"] += 1
-                if path_px is None or len(path_px) < 5:
-                    continue
-                row["n_success"] += 1
-
-                norm = _path_pixels_to_normalized(path_px, img_size)
-                fixed = _resample_path(norm, horizon)
-                baseline_fixed = None
-                if baseline_px is not None and len(baseline_px) >= 5:
-                    bnorm = _path_pixels_to_normalized(baseline_px, img_size)
-                    baseline_fixed = _resample_path(bnorm, horizon)
-
-                row["cot_list"].append(
-                    cumulative_cot(fixed, ter["height_map"], img_size, px_res, limit_deg))
-                row["risk_list"].append(
-                    risk_integral(fixed, ter["slope_map_deg"], img_size, risk_th))
-                row["mean_slope_list"].append(
-                    mean_slope_along_path(fixed, ter["slope_map_deg"], img_size))
-                row["max_slope_list"].append(
-                    max_slope_along_path(fixed, ter["slope_map_deg"], img_size))
-                row["length_m_list"].append(
-                    path_length_metres(fixed, img_size, px_res))
-                row["isr_list"].append(float(instruction_success(
-                    fixed, intent_name, iparams,
-                    ter["slope_map_deg"], img_size,
-                    ter["start"], ter["goal"],
-                    baseline_path_norm=baseline_fixed,
-                    height_map=ter["height_map"],
-                    pixel_resolution=px_res,
-                    limit_angle_deg=limit_deg,
-                )))
-
-            for key in ("cot_list", "risk_list", "mean_slope_list",
-                        "max_slope_list", "length_m_list", "isr_list"):
-                vals = row[key]
-                prefix = key.replace("_list", "")
-                row[f"{prefix}_mean"] = float(np.mean(vals)) if vals else float("nan")
-                row[f"{prefix}_std"] = float(np.std(vals)) if vals else float("nan")
-                del row[key]
-
-            row["feasibility"] = row["n_success"] / max(row["n_total"], 1)
-            results.append(row)
+    with ProcessPoolExecutor(max_workers=num_workers) as executor:
+        futures = {executor.submit(_eval_combo, args): args for args in combo_args}
+        for fut in tqdm(as_completed(futures), total=len(futures), desc="Weight sweep"):
+            results.extend(fut.result())
     return results
+
+
+def _eval_combo(args):
+    """Worker: evaluate one (α, β, γ, δ) combo across all terrains × intents."""
+    import sys
+    from pathlib import Path
+    _ROOT = Path(__file__).resolve().parents[2]
+    if str(_ROOT) not in sys.path:
+        sys.path.insert(0, str(_ROOT))
+
+    from scripts.generate_data import (
+        SlopeCotGenerator,
+        INTENT_CATALOG,
+        _path_pixels_to_normalized,
+        _resample_path,
+    )
+    from experiment.core.metrics import (
+        cumulative_cot,
+        risk_integral,
+        mean_slope_along_path,
+        max_slope_along_path,
+        path_length_metres,
+        instruction_success,
+    )
+
+    a, b, g, d, terrains_slim, intents_list, tc, horizon, risk_th = args
+    img_size = tc["img_size"]
+    px_res = tc["pixel_resolution"]
+    limit_deg = tc["limit_angle_deg"]
+
+    combo_rows = []
+    for intent_name in intents_list:
+        iparams = _intent_params_for(intent_name)
+        row = {
+            "alpha": a, "beta": b, "gamma": g, "delta": d,
+            "intent": intent_name,
+            "n_success": 0, "n_total": 0,
+            "cot_list": [], "risk_list": [], "mean_slope_list": [],
+            "max_slope_list": [], "length_m_list": [], "isr_list": [],
+        }
+        for ter in terrains_slim:
+            gen = SlopeCotGenerator(
+                img_size=img_size, height_range=tc["height_range"],
+                mass=10.0, gravity=9.8,
+                limit_angle_deg=limit_deg,
+                max_iterations=tc["max_iterations"],
+                pixel_resolution=px_res,
+            )
+            gen.height_map = ter["height_map"]
+            gen.slope_map = ter["slope_map_rad"]
+
+            path_px = gen.find_path_with_intent(
+                ter["start"], ter["goal"],
+                alpha=a, beta=b, gamma=g, delta=d,
+                risk_threshold_deg=risk_th,
+                intent_type=intent_name,
+                intent_params=iparams,
+            )
+            baseline_px = None
+            if any(k in intent_name for k in ("center_bias", "left_bias", "right_bias")):
+                baseline_px = gen.find_path_with_intent(
+                    ter["start"], ter["goal"],
+                    alpha=a, beta=b, gamma=g, delta=0.0,
+                    risk_threshold_deg=risk_th,
+                    intent_type="baseline",
+                    intent_params={},
+                )
+            row["n_total"] += 1
+            if path_px is None or len(path_px) < 5:
+                continue
+            row["n_success"] += 1
+
+            norm = _path_pixels_to_normalized(path_px, img_size)
+            fixed = _resample_path(norm, horizon)
+            baseline_fixed = None
+            if baseline_px is not None and len(baseline_px) >= 5:
+                bnorm = _path_pixels_to_normalized(baseline_px, img_size)
+                baseline_fixed = _resample_path(bnorm, horizon)
+
+            row["cot_list"].append(
+                cumulative_cot(fixed, ter["height_map"], img_size, px_res, limit_deg))
+            row["risk_list"].append(
+                risk_integral(fixed, ter["slope_map_deg"], img_size, risk_th))
+            row["mean_slope_list"].append(
+                mean_slope_along_path(fixed, ter["slope_map_deg"], img_size))
+            row["max_slope_list"].append(
+                max_slope_along_path(fixed, ter["slope_map_deg"], img_size))
+            row["length_m_list"].append(
+                path_length_metres(fixed, img_size, px_res))
+            row["isr_list"].append(float(instruction_success(
+                fixed, intent_name, iparams,
+                ter["slope_map_deg"], img_size,
+                ter["start"], ter["goal"],
+                baseline_path_norm=baseline_fixed,
+                height_map=ter["height_map"],
+                pixel_resolution=px_res,
+                limit_angle_deg=limit_deg,
+            )))
+
+        for key in ("cot_list", "risk_list", "mean_slope_list",
+                    "max_slope_list", "length_m_list", "isr_list"):
+            vals = row[key]
+            prefix = key.replace("_list", "")
+            row[f"{prefix}_mean"] = float(np.mean(vals)) if vals else float("nan")
+            row[f"{prefix}_std"] = float(np.std(vals)) if vals else float("nan")
+            del row[key]
+
+        row["feasibility"] = row["n_success"] / max(row["n_total"], 1)
+        combo_rows.append(row)
+    return combo_rows
 
 
 def _is_dominated(a: dict, b: dict, objectives: list[str], directions: list[str]) -> bool:
@@ -476,6 +520,8 @@ def main():
     ap = argparse.ArgumentParser(description="Exp 1: Pareto weight sweep")
     ap.add_argument("--config", type=str, default=None)
     ap.add_argument("--output-dir", type=str, default=str(_ROOT / "results" / "pareto"))
+    ap.add_argument("--workers", type=int, default=None,
+                    help="Number of parallel workers (default: num_workers in config, else all CPUs)")
     args = ap.parse_args()
 
     if args.config:
@@ -483,6 +529,9 @@ def main():
             cfg = yaml.safe_load(f)
     else:
         cfg = DEFAULT_CONFIG
+
+    if args.workers is not None:
+        cfg["num_workers"] = args.workers
 
     os.makedirs(args.output_dir, exist_ok=True)
 

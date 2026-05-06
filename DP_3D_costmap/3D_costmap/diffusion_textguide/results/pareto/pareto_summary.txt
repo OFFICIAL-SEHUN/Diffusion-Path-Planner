@@ -1,20 +1,27 @@
 Intent | #Pareto | Best CoT | Best Risk | Best ISR
 ------------------------------------------------------------
-baseline                   |     100 |    21.44 |      4.06 |     1.00
-left_bias                  |     191 |    22.15 |     18.46 |     0.98
-right_bias                 |     197 |    22.81 |     16.97 |     0.98
-center_bias                |     100 |    21.44 |      4.06 |     1.00
-avoid_steep                |     100 |    21.45 |      4.06 |     1.00
-prefer_flat                |     266 |    24.61 |      6.28 |     0.88
-minimize_elevation_change  |      62 |    21.76 |      3.96 |     0.95
-short_path                 |     550 |    21.44 |      4.06 |     0.59
-energy_efficient           |      27 |    21.57 |      4.27 |     0.97
-left_bias+avoid_steep      |     130 |    22.06 |     16.42 |     0.98
-right_bias+prefer_flat     |      64 |    23.65 |      9.11 |     0.60
-center_bias+prefer_flat    |      29 |    23.91 |      9.24 |     0.77
-short_path+avoid_steep     |     520 |    21.45 |      4.06 |     0.76
-energy_efficient+minimize_elevation_change |      62 |    21.76 |      4.27 |     0.96
+baseline                   |      40 |    21.31 |      5.08 |     1.00
+left_bias                  |      63 |    22.07 |      8.92 |     0.98
+right_bias                 |      64 |    22.10 |     10.12 |     0.98
+center_bias                |      24 |    22.20 |     17.57 |     0.88
+avoid_steep                |      46 |    21.44 |      5.08 |     1.00
+prefer_flat                |      57 |    22.13 |      4.90 |     0.88
+energy_efficient           |      84 |    21.31 |      4.62 |     0.97
+left_bias+avoid_steep      |      45 |    21.91 |      5.58 |     0.98
+right_bias+prefer_flat     |      73 |    22.16 |      7.46 |     0.90
+center_bias+prefer_flat    |      24 |    22.15 |     12.98 |     0.84
 
 --- Balanced pick (per-intent floors + utopia distance) ---
 feasibility_min=0.9 (per intent), isr_min=0.7 (per intent)
-No (α,β,γ,δ) satisfied per-intent constraints.
+BEST: α=0.5, β=2.0, γ=1.0, δ=2.0  min_feas=1.0000  min_ISR=0.7383  mean_ISR=0.8932  mean_CoT=24.4887  mean_Risk=13.7929  utopia_dist=0.6376
+  Per-intent breakdown:
+    baseline                        ISR=1.000  CoT=21.68  Risk=6.89
+    left_bias                       ISR=0.968  CoT=32.22  Risk=19.50
+    right_bias                      ISR=0.971  CoT=31.36  Risk=17.12
+    center_bias                     ISR=0.738  CoT=22.26  Risk=33.48
+    avoid_steep                     ISR=0.998  CoT=21.68  Risk=6.89
+    prefer_flat                     ISR=0.868  CoT=23.16  Risk=8.25
+    energy_efficient                ISR=0.972  CoT=22.41  Risk=8.65
+    left_bias+avoid_steep           ISR=0.885  CoT=24.24  Risk=9.02
+    right_bias+prefer_flat          ISR=0.748  CoT=23.62  Risk=11.02
+    center_bias+prefer_flat         ISR=0.785  CoT=22.26  Risk=17.11

@@ -23,7 +23,7 @@ Two intent classes are handled jointly:
   • Penalty intents  → contribute to δ·Î (left/right/center, avoid_steep,
                        prefer_flat).
   • Weight modulators → scale the base (α, β) before A* runs and contribute
-                       0 to δ·Î (short_path, energy_efficient).
+                       0 to δ·Î (energy_efficient).
 
 Lateral intents use the deterministic straight start→goal line as their
 reference (no chicken-and-egg dependency on a baseline A* call).
@@ -86,7 +86,6 @@ def _sample_instruction(intent_type):
 # Multipliers applied to (α, β) when the intent string contains the key.
 # 1.0 means unchanged.
 WEIGHT_MODULATORS = {
-    "short_path":       {"alpha_mult": 2.0, "beta_mult": 0.5},
     "energy_efficient": {"alpha_mult": 0.5, "beta_mult": 2.0},
 }
 
@@ -110,16 +109,12 @@ INTENT_CATALOG = [
     {"type": "prefer_flat",                                 "params": {}},
 
     # --- pure weight modulators (no δ-penalty) ---
-    {"type": "short_path",                                  "params": {}},
     {"type": "energy_efficient",                            "params": {}},
 
     # --- composite (penalty + penalty) ---
     {"type": "left_bias+avoid_steep",                       "params": {"tau_steep_deg": 20.0}},
     {"type": "right_bias+prefer_flat",                      "params": {}},
     {"type": "center_bias+prefer_flat",                     "params": {}},
-
-    # --- composite (modulator + penalty) ---
-    {"type": "short_path+avoid_steep",                      "params": {"tau_steep_deg": 20.0}},
 ]
 
 
@@ -407,8 +402,7 @@ def _calculate_intent_penalty(intent_type, intent_params, node_j, img_size,
     """Î_total ∈ [0, 1] for the intent at node_j.
 
     Composites combine atomic scores via mean (soft-AND of partial
-    satisfactions). Pure modulator intents (e.g. ``short_path``,
-    ``energy_efficient``) return 0 — they only modulate (α, β) at planner
+    satisfactions). Pure modulator intents (e.g. ``energy_efficient``) return 0 — they only modulate (α, β) at planner
     setup time, not the per-step δ·Î term.
     """
     if intent_type == "baseline":
@@ -643,11 +637,10 @@ class SlopeCotGenerator:
           start→goal line as their lateral reference (no chicken-and-egg
           dependency on a baseline A* call).
 
-        * **Weight modulators** (short_path, energy_efficient) instead scale
+        * **Weight modulators** (energy_efficient) instead scale
           the base (α, β) before A* runs and contribute 0 to δ·Î. Their
-          intuition (“take a shorter route”, “prefer low-energy ground”) is
-          encoded directly in the cost weights rather than as an extra
-          penalty term.
+          intuition (“prefer low-energy ground”) is encoded directly in the
+          cost weights rather than as an extra penalty term.
         """
         if self.height_map is None or self.slope_map is None:
             raise RuntimeError("generate()를 먼저 호출하세요.")

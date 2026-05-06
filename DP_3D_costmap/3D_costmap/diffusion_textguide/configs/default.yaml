@@ -34,7 +34,7 @@ intent:
     # gamma: 0.1
     # delta: 1.0
     alpha: 0.5
-    beta: 1.8
-    gamma: 0.4
-    delta: 2.0
+    beta: 1.75
+    gamma: 1.5
+    delta: 1.75
   risk_threshold_deg: 15.0

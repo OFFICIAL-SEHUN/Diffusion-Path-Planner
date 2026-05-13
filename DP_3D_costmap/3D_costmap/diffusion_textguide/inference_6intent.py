@@ -6,12 +6,12 @@ first, then any extra template-only types (e.g. ``short_path``) sorted alphabeti
 Each column uses the first template sentence for that type.
 
 Usage:
-  python inference_6intent.py --checkpoint checkpoints/sample40k/final_model.pt \
-                              --terrain data/raw/terrain_00087.pt \
-                              --output results/inference_all_intents.png
+  python inference_6intent.py --checkpoint checkpoints/final_model.pt    --terrain data/raw/terrain_05000.pt   --output results/inference_all_intents.png
 """
 
 import argparse
+from typing import Optional
+
 import numpy as np
 import torch
 import matplotlib
@@ -28,6 +28,12 @@ from model.diffusion import DiffusionScheduler
 from data_loader import text_to_tokens
 from instruction_utils import load_instruction_templates
 from scripts.generate_data import INTENT_CATALOG
+from text_conditioning import (
+    DEFAULT_FEATURE_DIMS,
+    get_intent_to_id,
+    is_frozen_feature_encoder,
+    normalize_text_encoder_type,
+)
 
 
 INSTRUCTION_TEMPLATES = load_instruction_templates("train")
@@ -70,6 +76,22 @@ INTENT_LABELS = [
 PATH_COLORS = ["#E63946"] * len(INTENTS)
 
 
+def _resolve_text_encoder_type(m_cfg: dict, state_dict: dict) -> str:
+    raw = m_cfg.get("text_encoder_type")
+    if raw is None and isinstance(m_cfg.get("text_encoder"), dict):
+        raw = m_cfg["text_encoder"].get("type")
+    if raw is not None:
+        return normalize_text_encoder_type(raw)
+    keys = set(state_dict.keys())
+    if any(k.startswith("text_encoder.") for k in keys):
+        return "learnable"
+    if any(k.startswith("intent_encoder.") for k in keys):
+        return "onehot"
+    if any(k.startswith("text_projection.") for k in keys):
+        return normalize_text_encoder_type("t5_proj")
+    return "learnable"
+
+
 def load_model(ckpt_path: str, device: torch.device):
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
     config = ckpt["config"]
@@ -78,6 +100,7 @@ def load_model(ckpt_path: str, device: torch.device):
     d_cfg = config.get("data", {})
     m_cfg = config.get("model", {})
     diff_cfg = config.get("diffusion", {})
+    text_cfg = m_cfg.get("text_encoder", {}) or {}
 
     state_dict = ckpt["model_state_dict"]
     visual_backbone = m_cfg.get("visual_backbone")
@@ -87,6 +110,13 @@ def load_model(ckpt_path: str, device: torch.device):
             if any(k.startswith("visual_encoder.backbone.") for k in state_dict)
             else "resnet"
         )
+
+    text_encoder_type = _resolve_text_encoder_type(m_cfg, state_dict)
+    num_intents = int(m_cfg.get("num_intents") or len(get_intent_to_id("train")))
+    text_feature_dim = int(
+        m_cfg.get("text_feature_dim")
+        or DEFAULT_FEATURE_DIMS.get(text_encoder_type, 256)
+    )
 
     model = ConditionalPathModel(
         transition_dim=2,
@@ -101,6 +131,9 @@ def load_model(ckpt_path: str, device: torch.device):
         timm_model_name=m_cfg.get("timm_model_name"),
         timm_pretrained=False,
         input_img_size=d_cfg.get("img_size"),
+        text_encoder_type=text_encoder_type,
+        num_intents=num_intents,
+        text_feature_dim=text_feature_dim,
     ).to(device)
     model.load_state_dict(state_dict)
     model.eval()
@@ -115,17 +148,40 @@ def load_model(ckpt_path: str, device: torch.device):
     return model, scheduler, vocab, config
 
 
-def run_inference(model, scheduler, costmap, start_pos, goal_pos,
-                  text_tokens, horizon, device):
+def run_inference(
+    model,
+    scheduler,
+    costmap,
+    start_pos,
+    goal_pos,
+    horizon,
+    device,
+    *,
+    text_encoder_type: str,
+    text_tokens=None,
+    text_features=None,
+    intent_id: Optional[int] = None,
+):
     costmap_t = costmap.unsqueeze(0).to(device)
     start_t = start_pos.unsqueeze(0).to(device)
     goal_t = goal_pos.unsqueeze(0).to(device)
-    tokens_t = text_tokens.unsqueeze(0).to(device)
+
+    te = normalize_text_encoder_type(text_encoder_type)
+    sample_kw: dict = {"show_progress": False}
+    if te == "learnable":
+        sample_kw["text_tokens"] = text_tokens.unsqueeze(0).to(device)
+    elif te == "onehot":
+        sample_kw["intent_ids"] = torch.tensor([intent_id], dtype=torch.long, device=device)
+    elif te in {"clip", "clip_proj", "bert_proj", "t5_proj"}:
+        sample_kw["text_features"] = text_features.unsqueeze(0).to(device)
 
     path = scheduler.sample(
-        model, costmap_t, shape=(1, horizon, 2),
-        start_pos=start_t, end_pos=goal_t,
-        text_tokens=tokens_t, show_progress=False,
+        model,
+        costmap_t,
+        shape=(1, horizon, 2),
+        start_pos=start_t,
+        end_pos=goal_t,
+        **sample_kw,
     )
     return path[0].cpu().numpy()
 
@@ -200,7 +256,10 @@ def main():
 
     model, scheduler, vocab, config = load_model(args.checkpoint, device)
     horizon = config.get("data", {}).get("horizon", 120)
-    print(f"[Config] horizon={horizon}, device={device}")
+    text_encoder_type = model.text_encoder_type
+    m_cfg = config.get("model", {})
+    text_cfg = m_cfg.get("text_encoder", {}) or {}
+    print(f"[Config] horizon={horizon}, device={device}, text_encoder={text_encoder_type}")
 
     terrain = torch.load(args.terrain, map_location="cpu", weights_only=False)
     costmap = terrain["costmap"]
@@ -222,12 +281,50 @@ def main():
     else:
         raise ValueError("No start/goal found in terrain file")
 
+    frozen_feats = None
+    if is_frozen_feature_encoder(text_encoder_type):
+        from experiment.support.text_encoder_ablation import FrozenTextFeatureEncoder
+
+        tname = text_cfg.get("model_name", m_cfg.get("text_model_name"))
+        tbatch = int(text_cfg.get("batch_size", 64))
+        enc = FrozenTextFeatureEncoder(
+            text_encoder_type,
+            model_name=tname,
+            device=device,
+            batch_size=tbatch,
+        )
+        sentences = [instr for _, instr in INTENTS]
+        frozen_feats = enc.encode(sentences)
+
+    intent_to_id = get_intent_to_id("train") if text_encoder_type == "onehot" else None
+
     gen_paths = []
-    for intent_type, instruction in INTENTS:
-        tokens = text_to_tokens(instruction, vocab, max_seq_len=16)
+    for idx, (intent_type, instruction) in enumerate(INTENTS):
         print(f"[{intent_type:20s}] \"{instruction}\"")
-        path = run_inference(model, scheduler, costmap, start_pos, goal_pos,
-                             tokens, horizon, device)
+        if text_encoder_type == "learnable":
+            tokens = text_to_tokens(instruction, vocab, max_seq_len=16)
+            path = run_inference(
+                model, scheduler, costmap, start_pos, goal_pos, horizon, device,
+                text_encoder_type=text_encoder_type,
+                text_tokens=tokens,
+            )
+        elif frozen_feats is not None:
+            path = run_inference(
+                model, scheduler, costmap, start_pos, goal_pos, horizon, device,
+                text_encoder_type=text_encoder_type,
+                text_features=frozen_feats[idx],
+            )
+        elif text_encoder_type == "onehot":
+            path = run_inference(
+                model, scheduler, costmap, start_pos, goal_pos, horizon, device,
+                text_encoder_type=text_encoder_type,
+                intent_id=intent_to_id.get(intent_type, 0),
+            )
+        else:
+            path = run_inference(
+                model, scheduler, costmap, start_pos, goal_pos, horizon, device,
+                text_encoder_type=text_encoder_type,
+            )
         gen_paths.append(path)
 
     out_path = args.output or str(_ROOT / "results" / "inference_all_intents.png")

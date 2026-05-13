@@ -71,18 +71,6 @@
     "Prefer smooth and flat portions of the map",
     "Plan through regions with small slope values"
   ],
-  "short_path": [
-    "Reach the goal using the least travel distance",
-    "Take a compact route to the destination",
-    "Avoid unnecessary detours",
-    "Move to the target as directly as possible",
-    "Choose the route with minimal path length",
-    "Use a concise path toward the goal",
-    "Keep the trajectory distance small",
-    "Prefer the shortest feasible connection",
-    "Plan a direct route without extra wandering",
-    "Reduce the total distance traveled"
-  ],
   "energy_efficient": [
     "Choose a route that lowers traversal energy",
     "Minimize the effort required to reach the goal",
@@ -130,17 +118,5 @@
     "Keep the path close to the reference line while staying flat",
     "Move through the middle of the map on low-gradient terrain",
     "Select a centered route that remains easy to traverse"
-  ],
-  "short_path+avoid_steep": [
-    "Reach the goal directly while avoiding high-slope regions",
-    "Keep the route compact but do not cross sharp inclines",
-    "Choose a short feasible path around steep terrain",
-    "Minimize travel distance while reducing steepness exposure",
-    "Use a direct route that bypasses aggressive gradients",
-    "Avoid long detours unless needed to stay away from steep ground",
-    "Plan a concise path that steers clear of highly inclined areas",
-    "Move efficiently to the goal without crossing steep patches",
-    "Keep the path length low while avoiding difficult slopes",
-    "Find a short route that remains safe from steep terrain"
   ]
 }

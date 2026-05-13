@@ -1,0 +1,62 @@
+project_name: DiffusionTextGuide_BackboneAblation10Intent_efficientnet_b0_scratch
+seed: 42
+data:
+  img_size: 100
+  horizon: 120
+  num_samples: 100
+  paths_per_terrain: 100
+  cost_weight: 50.0
+  min_distance_factor: 1.5
+gradient:
+  height_range:
+  - 0
+  - 5
+  terrain_scales:
+  - - 20
+    - 10
+  - - 10
+    - 5
+  - - 5
+    - 2
+  mass: 10.0
+  gravity: 9.8
+  limit_angle_deg: 25
+  pixel_resolution: 0.5
+  max_iterations: 20000
+intent:
+  cost_weights:
+    alpha: 0.5
+    beta: 1.75
+    gamma: 1.5
+    delta: 1.75
+  risk_threshold_deg: 15.0
+diffusion:
+  timesteps: 200
+  beta_start: 0.0001
+  beta_end: 0.02
+model:
+  base_dim: 64
+  time_embed_dim: 256
+  image_feat_dim: 256
+  visual_backbone: efficientnet_b0
+  timm_model_name: efficientnet_b0
+  timm_pretrained: false
+training:
+  epochs: 5000
+  batch_size: 128
+  learning_rate: 3.0e-05
+  checkpoint_dir: checkpoints/backbone_ablation_10intent/efficientnet_b0_scratch
+  model_name: diffusion_textguide_efficientnet_b0_scratch.pt
+  log_interval: 1000
+  use_amp: true
+inference:
+  show_progress: true
+logging:
+  val_loss_interval: 200
+  val_interval: 1000
+  val_max_samples: 50
+  log_dir: logs/backbone_ablation_10intent/efficientnet_b0_scratch
+  val_seed: 42
+  val_num_seeds: 1
+wandb:
+  group: backbone_ablation_10intent

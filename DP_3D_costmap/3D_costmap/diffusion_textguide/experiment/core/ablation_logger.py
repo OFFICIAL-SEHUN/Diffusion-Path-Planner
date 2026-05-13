@@ -34,21 +34,25 @@ from pathlib import Path
 from typing import Dict, Optional
 
 
-# All known intent types (+ composite ones).  Column names use sanitised keys.
-KNOWN_INTENTS: list[str] = [
-    "baseline",
-    "left_bias",
-    "right_bias",
-    "center_bias",
-    "avoid_steep",
-    "prefer_flat",
-    "short_path",
-    "energy_efficient",
-    "left_bias+avoid_steep",
-    "right_bias+prefer_flat",
-    "center_bias+prefer_flat",
-    "short_path+avoid_steep",
-]
+# Intent columns follow the active instruction split.  This keeps logs aligned
+# with regenerated datasets, including the 10-intent setup without short_path.
+try:
+    from instruction_utils import load_instruction_templates
+
+    KNOWN_INTENTS: list[str] = list(load_instruction_templates("train").keys())
+except Exception:
+    KNOWN_INTENTS = [
+        "baseline",
+        "left_bias",
+        "right_bias",
+        "center_bias",
+        "avoid_steep",
+        "prefer_flat",
+        "energy_efficient",
+        "left_bias+avoid_steep",
+        "right_bias+prefer_flat",
+        "center_bias+prefer_flat",
+    ]
 
 # Primary columns (printed to stdout)
 _PRIMARY = [

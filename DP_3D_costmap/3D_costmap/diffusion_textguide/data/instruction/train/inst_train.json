@@ -41,13 +41,6 @@
     "Choose the most level path available",
     "Stay on the smoothest terrain you can find"
   ],
-  "short_path": [
-    "Take the shortest route possible",
-    "Use the most direct path to the goal",
-    "Keep the route as short as you can",
-    "Choose the most direct way forward",
-    "Minimize the travel distance"
-  ],
   "energy_efficient": [
     "Choose the most energy-efficient route",
     "Minimize traversal effort on the way to the goal",
@@ -75,12 +68,5 @@
     "Take a center-aligned route over level ground",
     "Follow the baseline direction on the flattest terrain",
     "Stay near the middle route while keeping to smooth ground"
-  ],
-  "short_path+avoid_steep": [
-    "Take a short route while avoiding steep areas",
-    "Choose the most direct path that avoids steep slopes",
-    "Keep the path short but stay away from steep terrain",
-    "Find a compact route around steep sections",
-    "Minimize distance without crossing steep areas"
   ]
 }

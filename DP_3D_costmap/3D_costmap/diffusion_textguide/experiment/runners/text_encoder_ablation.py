@@ -1,10 +1,8 @@
-"""Run the text-encoder ablation train/eval pipeline."""
+"""Run the text-encoder ablation train/eval pipeline.
 
-"""
 Usage:
   python -m experiment.runners.text_encoder_ablation \
       --config experiment/configs/text_encoder_ablation.yaml
-        
 """
 
 from __future__ import annotations

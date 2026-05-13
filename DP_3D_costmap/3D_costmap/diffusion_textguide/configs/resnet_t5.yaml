@@ -70,6 +70,6 @@ inference:
 
 logging:
   val_loss_interval: 200
-  val_interval: 1000
+  val_interval: 200
   val_max_samples: 50
   log_dir: "logs/resnet_t5"

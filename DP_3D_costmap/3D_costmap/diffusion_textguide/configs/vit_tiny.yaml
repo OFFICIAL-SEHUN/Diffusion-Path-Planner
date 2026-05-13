@@ -69,6 +69,6 @@ inference:
 # ── Ablation logging ──────────────────────────────────────────────────────────
 logging:
   val_loss_interval: 200      # compute held-out val loss every N epochs (cheap)
-  val_interval: 1000          # full metrics every N epochs
+  val_interval: 200          # full metrics every N epochs
   val_max_samples: 50         # max val-terrain samples used for full metric computation
   log_dir: "logs/backbone_ablation"

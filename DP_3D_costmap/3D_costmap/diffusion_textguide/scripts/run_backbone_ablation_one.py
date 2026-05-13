@@ -81,7 +81,7 @@ MODEL_SPECS = {
 }
 
 INIT_CHOICES = ("pretrained", "scratch")
-DEFAULT_TRAIN_SEEDS = (42, 43, 44)
+DEFAULT_TRAIN_SEEDS = (42,)
 
 
 def canonical_model(value: str) -> str:
@@ -240,7 +240,7 @@ def main() -> int:
     parser.add_argument("--init", choices=["both", *INIT_CHOICES], default="both",
                         help="default: both; run pretrained then scratch for this model")
     parser.add_argument("--seeds", type=int, nargs="+", default=list(DEFAULT_TRAIN_SEEDS),
-                        help="training seeds; default: 42 43 44")
+                        help="training seeds; default: 42")
     parser.add_argument("--data-dir", default="data/raw")
     parser.add_argument("--val-dir", default="data/valid")
     parser.add_argument("--device", default="cuda")
@@ -249,7 +249,7 @@ def main() -> int:
     parser.add_argument("--learning-rate", type=float, default=3e-5)
     parser.add_argument("--log-interval", type=int, default=1000)
     parser.add_argument("--val-loss-interval", type=int, default=200)
-    parser.add_argument("--val-interval", type=int, default=1000)
+    parser.add_argument("--val-interval", type=int, default=200)
     parser.add_argument("--val-samples-per-intent", type=int, default=10,
                         help="train-time DDPM metric samples per intent at val_interval")
     parser.add_argument("--val-seed", type=int, default=42)
@@ -261,11 +261,11 @@ def main() -> int:
     parser.add_argument("--img-size", type=int, default=100)
     parser.add_argument("--horizon", type=int, default=120)
     parser.add_argument("--risk-threshold-deg", type=float, default=15.0)
-    parser.add_argument("--checkpoint-root", default="checkpoints/backbone_ablation_10intent_paper")
-    parser.add_argument("--log-root", default="logs/backbone_ablation_10intent_paper")
-    parser.add_argument("--config-out-dir", default="configs/backbone_ablation_10intent_paper")
-    parser.add_argument("--eval-output-root", default="results/backbone_ablation_10intent_paper")
-    parser.add_argument("--wandb-group", default="backbone_ablation_10intent_paper")
+    parser.add_argument("--checkpoint-root", default="checkpoints/backbone_ablation_10intent")
+    parser.add_argument("--log-root", default="logs/backbone_ablation_10intent")
+    parser.add_argument("--config-out-dir", default="configs/backbone_ablation_10intent")
+    parser.add_argument("--eval-output-root", default="results/backbone_ablation_10intent")
+    parser.add_argument("--wandb-group", default="backbone_ablation_10intent")
     parser.add_argument("--wandb-mode", choices=["online", "offline", "disabled"], default="offline")
     parser.add_argument("--resume", default=None)
     parser.add_argument("--max-train-batches", type=int, default=None,

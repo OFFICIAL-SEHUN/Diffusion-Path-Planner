@@ -2,30 +2,30 @@
 
 ## Balanced (multi-gate utopia distance)
 
-- **Weights:** `(0.2, 2, 0.5, 2.3)`
+- **Weights:** `(0.5, 1.5, 1.5, 1.5)`
 - **mean_feasibility:** 1.0000
-- **mean_cot:** 24.7051
-- **mean_risk:** 8.7948
-- **mean_isr:** 0.8630
-- **min_isr:** 0.5768
+- **mean_cot:** 24.3051
+- **mean_risk:** 10.1017
+- **mean_isr:** 0.8765
+- **min_isr:** 0.7114
 - **Interpretation:** Balances mean CoT, mean risk, and mean ISR (after crossing gates on feasibility/ISR floors).
 
 ## Energy-favoring
 
-- **Weights:** `(1, 2.2, 0.5, 2)`
+- **Weights:** `(1, 2.5, 0.5, 1.5)`
 - **mean_feasibility:** 1.0000
-- **mean_cot:** 23.2001
-- **mean_risk:** 8.5753
-- **mean_isr:** 0.8302
-- **min_isr:** 0.5438
+- **mean_cot:** 22.7187
+- **mean_risk:** 21.3126
+- **mean_isr:** 0.8291
+- **min_isr:** 0.5703
 - **Interpretation:** Favors low mean CoT while keeping mean feasibility and ISR moderately high.
 
 ## Instruction-favoring
 
-- **Weights:** `(0.2, 1.2, 0.2, 2.5)`
+- **Weights:** `(0.5, 1.5, 0.5, 2.5)`
 - **mean_feasibility:** 1.0000
-- **mean_cot:** 26.1958
-- **mean_risk:** 12.5901
-- **mean_isr:** 0.8780
-- **min_isr:** 0.5780
+- **mean_cot:** 25.6770
+- **mean_risk:** 21.5525
+- **mean_isr:** 0.8980
+- **min_isr:** 0.7413
 - **Interpretation:** Favors high mean ISR with a feasibility floor; may trade higher CoT.

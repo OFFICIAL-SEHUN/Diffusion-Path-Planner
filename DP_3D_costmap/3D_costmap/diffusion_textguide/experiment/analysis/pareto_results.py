@@ -415,25 +415,45 @@ def plot_pareto_cot_risk(df: pd.DataFrame, intent: str, out_base: Path) -> None:
     fig.savefig(f"{stem}.png", bbox_inches="tight")
     plt.close(fig)
 
-
 def plot_pareto_3d_weight_frontier(cross: pd.DataFrame, out_base: Path) -> None:
-    """3-D Pareto front over weight tuples (α,β,γ,δ); mesh = Delaunay in (mean_cot, mean_risk)."""
+    """
+    3-D Pareto front over weight tuples (α,β,γ,δ).
+
+    Improvements:
+      1. Highlight selected balanced tuple with a black star.
+      2. Add colorbar where color = mean_ISR.
+      3. Reduce Delaunay mesh opacity.
+      4. Improve layout: avoid clipped left label and move z-label away from colorbar.
+    """
     req = ["mean_cot", "mean_risk", "mean_isr", "mean_feasibility"]
     if cross.empty or not all(c in cross.columns for c in req):
         return
+
     cc, _ = filter_finite_objectives(cross, cols=CROSS_OBJECTIVES)
     if cc.empty:
         return
+
     front = pareto_front(cc, objective_cols=CROSS_OBJECTIVES)
     if front.empty:
         return
+
+    # Use the same balanced-selection rule used in recommended_tuples.md
+    recs = select_recommended_tuples(cross)
+    balanced = recs.get("balanced", None)
+
     xc = front["mean_cot"].to_numpy(dtype=float)
     yc = front["mean_risk"].to_numpy(dtype=float)
     zc = front["mean_isr"].to_numpy(dtype=float)
 
-    fig = plt.figure(figsize=(9, 7))
+    fig = plt.figure(figsize=(10.5, 7.4))
     ax = fig.add_subplot(111, projection="3d")
 
+    # IMPORTANT:
+    # 3D plots do not behave well with tight_layout alone.
+    # Manually reserve more left margin and colorbar space.
+    fig.subplots_adjust(left=0.10, right=0.84, top=0.90, bottom=0.08)
+
+    # Delaunay mesh: lower alpha so the points remain readable
     if len(xc) >= 3 and np.ptp(xc) > 1e-15 and np.ptp(yc) > 1e-15:
         try:
             tri = Triangulation(xc, yc)
@@ -442,40 +462,78 @@ def plot_pareto_3d_weight_frontier(cross: pd.DataFrame, out_base: Path) -> None:
                 tri.set_mask(mask)
             except Exception:
                 pass
+
             ax.plot_trisurf(
                 tri,
                 zc,
-                alpha=0.42,
+                alpha=0.18,
                 cmap="coolwarm",
-                linewidth=0.25,
-                edgecolor="0.35",
+                linewidth=0.20,
+                edgecolor="0.45",
                 antialiased=True,
                 shade=True,
             )
         except (RuntimeError, ValueError):
             pass
 
+    # Pareto points: color = mean_ISR
     feas = front["mean_feasibility"].fillna(0).to_numpy(dtype=float)
     if np.ptp(feas) > 1e-9:
         fe_n = (feas - feas.min()) / (feas.max() - feas.min())
-        sm = np.clip(6 + 22 * fe_n, 8, 32)
+        point_sizes = np.clip(12 + 32 * fe_n, 14, 48)
     else:
-        sm = np.full_like(xc, 14.0, dtype=float)
+        point_sizes = np.full_like(xc, 24.0, dtype=float)
 
-    ax.scatter(
+    sc = ax.scatter(
         xc,
         yc,
         zc,
-        s=sm,
-        alpha=0.95,
-        depthshade=True,
+        s=point_sizes,
         c=zc,
         cmap="coolwarm",
+        alpha=0.95,
+        depthshade=True,
         edgecolors="0.15",
-        linewidths=0.2,
+        linewidths=0.25,
+        label="Pareto weight tuples",
     )
 
-    top = front.nlargest(5, "mean_isr")
+    # Highlight balanced pick
+    if balanced is not None:
+        bx = float(balanced["mean_cot"])
+        by = float(balanced["mean_risk"])
+        bz = float(balanced["mean_isr"])
+
+        ax.scatter(
+            [bx],
+            [by],
+            [bz],
+            s=230,
+            marker="*",
+            c="black",
+            edgecolors="white",
+            linewidths=0.8,
+            depthshade=False,
+            label="Selected balanced tuple",
+        )
+
+        label = (
+            "Selected\n"
+            f"α={balanced['alpha']:g}, β={balanced['beta']:g}, "
+            f"γ={balanced['gamma']:g}, δ={balanced['delta']:g}"
+        )
+
+        ax.text(
+            bx,
+            by,
+            bz + 0.006,
+            label,
+            fontsize=7,
+            color="black",
+        )
+
+    # Label only a few high-ISR points to avoid clutter
+    top = front.nlargest(4, "mean_isr")
     for _, r in top.iterrows():
         lbl = format_weights(r["alpha"], r["beta"], r["gamma"], r["delta"])
         ax.text(
@@ -484,19 +542,136 @@ def plot_pareto_3d_weight_frontier(cross: pd.DataFrame, out_base: Path) -> None:
             float(r["mean_isr"]),
             lbl,
             fontsize=5,
+            alpha=0.85,
         )
-    ax.set_xlabel("mean_cot (↓, over intents)")
-    ax.set_ylabel("mean_risk (↓, over intents)")
-    ax.set_zlabel("mean_isr (↑, over intents)")
-    ax.set_title(
-        "Pareto front over (α, β, γ, δ)\n"
-        "(Delaunay mesh in mean_cot–mean_risk; height = mean_isr)"
+
+    # Axis labels
+    ax.set_xlabel("mean_CoT (↓, over intents)", labelpad=10)
+    ax.set_ylabel("mean_risk (↓, over intents)", labelpad=14)
+
+    # Remove default z-label and place it manually on the left side
+    ax.set_zlabel("")
+    ax.text2D(
+        -0.06, 0.52,
+        "mean_ISR (↑, over intents)",
+        transform=ax.transAxes,
+        rotation=90,
+        va="center",
+        ha="center",
+        fontsize=10,
     )
+
+    ax.set_title(
+        "Cross-intent Pareto front over weight tuples (α, β, γ, δ)", pad=14,
+        # "Delaunay mesh in mean_CoT–mean_risk; height/color = mean_ISR",
+    )
+
+    # Colorbar: keep some spacing from the 3D axes
+    cbar = fig.colorbar(
+        sc,
+        ax=ax,
+        shrink=0.62,
+        # pad=0.10,
+        pad=0.02,
+        fraction=0.035
+    )
+    # cbar.set_label("mean_ISR (↑)", labelpad=10)
+
+    ax.legend(loc="upper left")
     ax.view_init(elev=22, azim=42)
-    fig.tight_layout()
+
+    # Do NOT rely only on tight_layout for 3D
+    # fig.tight_layout()  # optional, but usually not needed / sometimes harmful for 3D
     fig.savefig(out_base / "pareto_3d_weight_frontier.png", bbox_inches="tight")
     plt.close(fig)
 
+def plot_pareto_2d_cot_risk_isr_projection(cross: pd.DataFrame, out_base: Path) -> None:
+    """
+    2-D projection of the weight-level Pareto front.
+
+    x = mean_CoT
+    y = mean_risk
+    color = mean_ISR
+    black star = selected balanced tuple
+    """
+    req = ["mean_cot", "mean_risk", "mean_isr", "mean_feasibility"]
+    if cross.empty or not all(c in cross.columns for c in req):
+        return
+
+    cc, _ = filter_finite_objectives(cross, cols=CROSS_OBJECTIVES)
+    if cc.empty:
+        return
+
+    front = pareto_front(cc, objective_cols=CROSS_OBJECTIVES)
+    if front.empty:
+        return
+
+    recs = select_recommended_tuples(cross)
+    balanced = recs.get("balanced", None)
+
+    fig, ax = plt.subplots(figsize=(7.0, 5.6))
+
+    sizes = np.clip(
+        40 + 160 * front["mean_feasibility"].fillna(0).to_numpy(dtype=float),
+        30,
+        260,
+    )
+
+    sc = ax.scatter(
+        front["mean_cot"],
+        front["mean_risk"],
+        c=front["mean_isr"],
+        s=sizes,
+        cmap="coolwarm",
+        alpha=0.88,
+        edgecolors="0.2",
+        linewidths=0.25,
+        label="Pareto weight tuples",
+    )
+
+    # Highlight balanced pick
+    if balanced is not None:
+        bx = float(balanced["mean_cot"])
+        by = float(balanced["mean_risk"])
+
+        ax.scatter(
+            [bx],
+            [by],
+            s=260,
+            marker="*",
+            c="black",
+            edgecolors="white",
+            linewidths=0.8,
+            label="Selected balanced tuple",
+            zorder=5,
+        )
+
+        ax.annotate(
+            (
+                "Selected\n"
+                f"α={balanced['alpha']:g}, β={balanced['beta']:g}, "
+                f"γ={balanced['gamma']:g}, δ={balanced['delta']:g}"
+            ),
+            xy=(bx, by),
+            xytext=(10, 10),
+            textcoords="offset points",
+            fontsize=8,
+            arrowprops=dict(arrowstyle="->", linewidth=0.8),
+        )
+
+    cbar = fig.colorbar(sc, ax=ax)
+    cbar.set_label("mean_ISR (↑)")
+
+    ax.set_xlabel("mean_CoT (↓, over intents)")
+    ax.set_ylabel("mean_risk (↓, over intents)")
+    ax.set_title("2-D projection of Pareto front: mean_CoT vs mean_risk")
+
+    ax.grid(True, alpha=0.25)
+    ax.legend(loc="best")
+
+    fig.tight_layout()
+    fig.savefig(out_base / "pareto_2d_cot_risk_isr_projection.png", bbox_inches="tight")
+    plt.close(fig)
 
 def plot_pareto_3d_objectives(df: pd.DataFrame, intent: str, out_base: Path) -> None:
     """Optional: Pareto front in raw (cot,risk,isr) for one intent only (--per-intent-pareto-plots)."""
@@ -893,6 +1068,7 @@ def main() -> None:
 
     if not cross.empty:
         plot_pareto_3d_weight_frontier(cross, figures_3d_dir)
+        plot_pareto_2d_cot_risk_isr_projection(cross, figures_dir)
         plot_cross_intent_tradeoff_scatter(cross, figures_dir)
         plot_cross_intent_risk_isr_scatter(cross, figures_dir)
 

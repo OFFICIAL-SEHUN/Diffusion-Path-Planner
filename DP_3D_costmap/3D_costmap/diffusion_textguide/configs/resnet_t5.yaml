@@ -3,6 +3,7 @@
 # =============================================================================
 # Usage:
 #   python train.py --config configs/resnet_t5.yaml --data-dir data/raw --val-dir data/valid
+# Resume: set training.resume below, or override with: --resume checkpoints/resnet_t5/epoch_*.pt
 # Requires: pip install transformers (first run downloads t5-base from Hugging Face)
 # =============================================================================
 
@@ -29,9 +30,9 @@ gradient:
 intent:
   cost_weights:
     alpha: 0.5
-    beta: 1.8
-    gamma: 0.4
-    delta: 2.0
+    beta: 1.75
+    gamma: 1.5
+    delta: 1.75
   risk_threshold_deg: 15.0
 
 diffusion:
@@ -53,13 +54,16 @@ model:
     batch_size: 64
 
 training:
-  epochs: 5000
+  epochs: 50000
   batch_size: 128
   learning_rate: 0.00003
   checkpoint_dir: "checkpoints/resnet_t5"
   model_name: "diffusion_textguide_resnet_t5.pt"
   log_interval: 1000
   use_amp: true
+  # Path to epoch_*.pt (relative to diffusion_textguide/ or absolute). null = train from scratch.
+  resume: null
+# resume: "checkpoints/resnet_t5/epoch_5000.pt"
 
 inference:
   show_progress: true

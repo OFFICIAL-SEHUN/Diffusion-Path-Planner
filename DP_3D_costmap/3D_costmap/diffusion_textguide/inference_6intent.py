@@ -1,12 +1,14 @@
 """
 Multi-intent inference — Height map (row 1) + Slope map (row 2), one column per intent.
 
-Intent list follows ``scripts.generate_data.INTENT_CATALOG``; first instruction template each.
+Intents = every key in ``data/instruction/train/inst_train.json``: ``INTENT_CATALOG`` order
+first, then any extra template-only types (e.g. ``short_path``) sorted alphabetically.
+Each column uses the first template sentence for that type.
 
 Usage:
   python inference_6intent.py --checkpoint checkpoints/sample40k/final_model.pt \
                               --terrain data/raw/terrain_00087.pt \
-                              --output results/inference_6intent.png
+                              --output results/inference_all_intents.png
 """
 
 import argparse
@@ -43,7 +45,23 @@ def _first_instruction(itype: str) -> str:
     return " 그리고 ".join(combined) if combined else itype
 
 
-INTENTS = [(e["type"], _first_instruction(e["type"])) for e in INTENT_CATALOG]
+def _intent_types_in_order() -> list[str]:
+    """All train-template intent keys: catalog order, then remaining keys sorted."""
+    catalog_order = [e["type"] for e in INTENT_CATALOG]
+    seen: set[str] = set()
+    out: list[str] = []
+    for t in catalog_order:
+        if t in INSTRUCTION_TEMPLATES and t not in seen:
+            out.append(t)
+            seen.add(t)
+    for t in sorted(INSTRUCTION_TEMPLATES.keys()):
+        if t not in seen:
+            out.append(t)
+            seen.add(t)
+    return out
+
+
+INTENTS = [(t, _first_instruction(t)) for t in _intent_types_in_order()]
 
 INTENT_LABELS = [
     t.replace("_", " ").replace("+", " + ").title() for t, _ in INTENTS
@@ -112,11 +130,11 @@ def run_inference(model, scheduler, costmap, start_pos, goal_pos,
     return path[0].cpu().numpy()
 
 
-def visualize_6intent(height_map, slope_map, gen_paths, gt_paths, img_size,
+def visualize_intents(height_map, slope_map, gen_paths, gt_paths, img_size,
                       out_path, show_gt=True, terrain_note=None):
     """Row 1: Height map × N intents, Row 2: Slope map × N intents."""
     n = len(INTENTS)
-    fig, axes = plt.subplots(2, n, figsize=(min(4.0 * n, 56), 8.5))
+    fig, axes = plt.subplots(2, n, figsize=(min(4.0 * n, 56), 8.5), squeeze=False)
 
     def to_px(p):
         return (p + 1) / 2 * img_size
@@ -212,8 +230,8 @@ def main():
                              tokens, horizon, device)
         gen_paths.append(path)
 
-    out_path = args.output or str(_ROOT / "results" / "inference_6intent.png")
-    visualize_6intent(
+    out_path = args.output or str(_ROOT / "results" / "inference_all_intents.png")
+    visualize_intents(
         height_map, slope_map, gen_paths, gt_paths, img_size, out_path,
         show_gt=not args.no_gt,
         terrain_note=args.terrain_note,

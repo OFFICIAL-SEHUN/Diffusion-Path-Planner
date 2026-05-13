@@ -883,7 +883,7 @@ def main():
         "--resume",
         type=str,
         default=None,
-        help="Path to epoch_*.pt to resume (loads model/optimizer/scaler, continues from next epoch)",
+        help="Path to epoch_*.pt to resume (overrides training.resume in YAML if set)",
     )
     args = ap.parse_args()
 
@@ -901,7 +901,13 @@ def main():
     data_dir = args.data_dir or str(_ROOT / "data" / "raw")
     val_dir  = args.val_dir  or str(_ROOT / "data" / "valid")
 
-    train(config, data_dir, val_dir, device_str=args.device, resume_from=args.resume)
+    resume_from = args.resume
+    if resume_from is None:
+        cfg_resume = (config.get("training") or {}).get("resume")
+        if cfg_resume:
+            resume_from = str(cfg_resume)
+
+    train(config, data_dir, val_dir, device_str=args.device, resume_from=resume_from)
 
 
 if __name__ == "__main__":

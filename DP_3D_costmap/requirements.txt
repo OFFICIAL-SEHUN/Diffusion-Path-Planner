@@ -9,3 +9,4 @@ pyyaml
 transformers==4.48.3
 wandb
 timm
+pandas

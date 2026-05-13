@@ -122,7 +122,7 @@ def build_config(args: argparse.Namespace, init: str, seed: int) -> tuple[dict[s
     model_key = canonical_model(args.model)
     spec = MODEL_SPECS[model_key]
     pretrained = init == "pretrained"
-    slug = f"{model_key}_{init}_seed{seed}"
+    slug = f"{model_key}_{init}" if len(args.seeds) == 1 else f"{model_key}_{init}_seed{seed}"
 
     cfg = load_yaml(ROOT / spec["base_config"])
     cfg["project_name"] = f"DiffusionTextGuide_BackboneAblation10Intent_{slug}"

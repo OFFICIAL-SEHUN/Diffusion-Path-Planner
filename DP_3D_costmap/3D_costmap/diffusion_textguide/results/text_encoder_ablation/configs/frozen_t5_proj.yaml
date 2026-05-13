@@ -1,4 +1,4 @@
-project_name: DiffusionTextGuide_ResNet_onehot_intent
+project_name: DiffusionTextGuide_ResNet_frozen_t5_proj
 seed: 42
 data:
   img_size: 100
@@ -26,9 +26,9 @@ gradient:
 intent:
   cost_weights:
     alpha: 0.5
-    beta: 1.8
-    gamma: 0.4
-    delta: 2.0
+    beta: 1.75
+    gamma: 1.5
+    delta: 1.75
   risk_threshold_deg: 15.0
 diffusion:
   timesteps: 200
@@ -41,23 +41,30 @@ model:
   visual_backbone: resnet
   timm_model_name: resnet18
   timm_pretrained: true
-  text_encoder_type: onehot
+  text_encoder_type: t5_proj
   text_encoder:
-    type: onehot
-    model_name: null
+    type: t5_proj
+    model_name: t5-base
     batch_size: 64
 training:
   epochs: 5000
   batch_size: 128
   learning_rate: 3.0e-05
-  checkpoint_dir: checkpoints/text_encoder_ablation/resnet18_pretrained/onehot_intent
-  model_name: diffusion_textguide_onehot_intent.pt
+  checkpoint_dir: checkpoints/text_encoder_ablation/frozen_t5_proj
+  model_name: diffusion_textguide_frozen_t5_proj.pt
   log_interval: 1000
   use_amp: true
+  deterministic: false
 inference:
   show_progress: true
 logging:
-  val_loss_interval: 500
-  val_interval: 500
-  val_max_samples: 50
-  log_dir: logs/text_encoder_ablation/resnet18_pretrained/onehot_intent
+  val_loss_interval: 200
+  val_interval: 1000
+  log_dir: logs/text_encoder_ablation/frozen_t5_proj
+  val_samples_per_intent: 10
+  val_seed: 42
+  val_num_seeds: 1
+  vis_dir: results/text_encoder_ablation/train_vis/frozen_t5_proj
+wandb:
+  project: diffusion-textguide-text-encoder-ablation
+  group: resnet18_pretrained_seed42

@@ -2,29 +2,43 @@ base_config: configs/resnet.yaml
 data_dir: data/raw
 val_dir: data/valid
 device: cuda
+wandb_mode: disabled
 
-output_dir: results/text_encoder_ablation/resnet18_pretrained_fresh_5000
-generated_config_dir: results/text_encoder_ablation/resnet18_pretrained_fresh_5000/configs
+output_dir: results/text_encoder_ablation
+generated_config_dir: results/text_encoder_ablation/configs
+checkpoint_root: checkpoints/text_encoder_ablation
+log_root: logs/text_encoder_ablation
+train_vis_root: results/text_encoder_ablation/train_vis
+run_group: ""
 
 wandb:
-  project: diffusion-textguide-text-encoder-ablation-5000
-  group: resnet18_pretrained_fresh_5000
+  project: diffusion-textguide-text-encoder-ablation
+  group: resnet18_pretrained_seed42
 
-# =============================================================================
-#usage : python3 -m experiment.runners.text_encoder_ablation --config experiment/configs/text_encoder_ablation.yaml
+# Selected Pareto parameters after removing short_path intents.
+cost_weights:
+  alpha: 0.5
+  beta: 1.75
+  gamma: 1.5
+  delta: 1.75
+risk_threshold_deg: 15.0
+
+# Experiment protocol.
+# One command runs every encoder below with seed 42.
+seeds: [42]
 epochs: 5000
 batch_size: 128
-val_loss_interval: 100
+val_loss_interval: 200
 val_interval: 1000
 train_val_seed: 42
-train_val_samples_per_intent: 50
+train_val_samples_per_intent: 10
 train_val_num_seeds: 1
 
-# Use the full validation instruction set for train-time metrics and final eval.
-# No train_val_max_samples / train_val_samples_per_intent / eval_max_samples /
-# eval_samples_per_intent cap is set here.
-eval_seed: 42
+eval_seed: 4242
+eval_samples_per_intent: 100
 eval_num_seeds: 3
+
+deterministic: false
 
 encoders:
   - name: no_text

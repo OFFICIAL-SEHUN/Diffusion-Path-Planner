@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Run 10-intent backbone ablation jobs for one backbone.
+"""Run paper-grade 10-intent backbone ablation jobs for one backbone.
 
-By default this launches both pretrained and scratch initializations for the
-requested backbone, so jobs can be distributed by model across servers.  Use
---init pretrained or --init scratch when a server should run only one init.
+Default unit of work for one server:
+  model x {pretrained, scratch} x {3 training seeds}
+
+Use --init pretrained/scratch or --seeds to narrow the run.  Each finished model
+is evaluated with a fixed intent-balanced validation protocol.
 """
 
 from __future__ import annotations
@@ -79,6 +81,7 @@ MODEL_SPECS = {
 }
 
 INIT_CHOICES = ("pretrained", "scratch")
+DEFAULT_TRAIN_SEEDS = (42, 43, 44)
 
 
 def canonical_model(value: str) -> str:
@@ -109,15 +112,21 @@ def resolve_run_path(value: str) -> Path:
     return path if path.is_absolute() else ROOT / path
 
 
-def build_config(args: argparse.Namespace, init: str) -> tuple[dict[str, Any], Path, str]:
+def selected_inits(args: argparse.Namespace) -> list[str]:
+    if args.init == "both":
+        return list(INIT_CHOICES)
+    return [args.init]
+
+
+def build_config(args: argparse.Namespace, init: str, seed: int) -> tuple[dict[str, Any], Path, str]:
     model_key = canonical_model(args.model)
     spec = MODEL_SPECS[model_key]
     pretrained = init == "pretrained"
-    slug = f"{model_key}_{init}"
+    slug = f"{model_key}_{init}_seed{seed}"
 
     cfg = load_yaml(ROOT / spec["base_config"])
     cfg["project_name"] = f"DiffusionTextGuide_BackboneAblation10Intent_{slug}"
-    cfg["seed"] = args.seed
+    cfg["seed"] = int(seed)
 
     data_cfg = cfg.setdefault("data", {})
     data_cfg["img_size"] = args.img_size
@@ -147,6 +156,7 @@ def build_config(args: argparse.Namespace, init: str) -> tuple[dict[str, Any], P
         "model_name": f"diffusion_textguide_{slug}.pt",
         "log_interval": args.log_interval,
         "use_amp": not args.no_amp,
+        "deterministic": args.deterministic,
     })
     if args.max_train_batches is not None:
         train_cfg["max_train_batches"] = args.max_train_batches
@@ -160,13 +170,9 @@ def build_config(args: argparse.Namespace, init: str) -> tuple[dict[str, Any], P
         "log_dir": str(Path(args.log_root) / slug),
         "val_seed": args.val_seed,
         "val_num_seeds": args.val_num_seeds,
+        "val_samples_per_intent": args.val_samples_per_intent,
     })
-    if args.val_samples_per_intent is not None:
-        log_cfg["val_samples_per_intent"] = args.val_samples_per_intent
-        log_cfg.pop("val_max_samples", None)
-    else:
-        log_cfg["val_max_samples"] = args.val_max_samples
-        log_cfg.pop("val_samples_per_intent", None)
+    log_cfg.pop("val_max_samples", None)
 
     wandb_cfg = cfg.setdefault("wandb", {})
     wandb_cfg["group"] = args.wandb_group
@@ -198,10 +204,33 @@ def build_train_command(args: argparse.Namespace, config_path: Path) -> list[str
     return cmd
 
 
-def selected_inits(args: argparse.Namespace) -> list[str]:
-    if args.init == "both":
-        return list(INIT_CHOICES)
-    return [args.init]
+def build_eval_command(args: argparse.Namespace, ckpt_path: Path, output_path: Path) -> list[str]:
+    cmd = [
+        sys.executable,
+        "-m",
+        "experiment.evaluators.text_encoder_ablation",
+        "--checkpoint",
+        str(ckpt_path),
+        "--data-dir",
+        args.val_dir,
+        "--output",
+        str(output_path),
+        "--device",
+        args.device,
+        "--seed",
+        str(args.eval_seed),
+        "--num-seeds",
+        str(args.eval_num_seeds),
+        "--samples-per-intent",
+        str(args.eval_samples_per_intent),
+    ]
+    return cmd
+
+
+def print_command(label: str, cmd: list[str], wandb_mode: str) -> None:
+    env_prefix = f"WANDB_MODE={wandb_mode}"
+    printable = " ".join([env_prefix] + [shlex.quote(part) for part in cmd])
+    print(f"{label}: {printable}")
 
 
 def main() -> int:
@@ -210,6 +239,8 @@ def main() -> int:
                         help="one of convnext, resnet-18, efficientnet_b0, swin, vit_tiny")
     parser.add_argument("--init", choices=["both", *INIT_CHOICES], default="both",
                         help="default: both; run pretrained then scratch for this model")
+    parser.add_argument("--seeds", type=int, nargs="+", default=list(DEFAULT_TRAIN_SEEDS),
+                        help="training seeds; default: 42 43 44")
     parser.add_argument("--data-dir", default="data/raw")
     parser.add_argument("--val-dir", default="data/valid")
     parser.add_argument("--device", default="cuda")
@@ -219,54 +250,76 @@ def main() -> int:
     parser.add_argument("--log-interval", type=int, default=1000)
     parser.add_argument("--val-loss-interval", type=int, default=200)
     parser.add_argument("--val-interval", type=int, default=1000)
-    parser.add_argument("--val-max-samples", type=int, default=50)
-    parser.add_argument("--val-samples-per-intent", type=int, default=None)
+    parser.add_argument("--val-samples-per-intent", type=int, default=10,
+                        help="train-time DDPM metric samples per intent at val_interval")
     parser.add_argument("--val-seed", type=int, default=42)
     parser.add_argument("--val-num-seeds", type=int, default=1)
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--eval-samples-per-intent", type=int, default=100,
+                        help="final evaluation references per intent")
+    parser.add_argument("--eval-seed", type=int, default=4242)
+    parser.add_argument("--eval-num-seeds", type=int, default=3)
     parser.add_argument("--img-size", type=int, default=100)
     parser.add_argument("--horizon", type=int, default=120)
     parser.add_argument("--risk-threshold-deg", type=float, default=15.0)
-    parser.add_argument("--checkpoint-root", default="checkpoints/backbone_ablation_10intent")
-    parser.add_argument("--log-root", default="logs/backbone_ablation_10intent")
-    parser.add_argument("--config-out-dir", default="configs/backbone_ablation_10intent")
-    parser.add_argument("--wandb-group", default="backbone_ablation_10intent")
+    parser.add_argument("--checkpoint-root", default="checkpoints/backbone_ablation_10intent_paper")
+    parser.add_argument("--log-root", default="logs/backbone_ablation_10intent_paper")
+    parser.add_argument("--config-out-dir", default="configs/backbone_ablation_10intent_paper")
+    parser.add_argument("--eval-output-root", default="results/backbone_ablation_10intent_paper")
+    parser.add_argument("--wandb-group", default="backbone_ablation_10intent_paper")
     parser.add_argument("--wandb-mode", choices=["online", "offline", "disabled"], default="offline")
     parser.add_argument("--resume", default=None)
     parser.add_argument("--max-train-batches", type=int, default=None,
                         help="debug only; limits batches per epoch in generated config")
     parser.add_argument("--no-amp", action="store_true")
+    parser.add_argument("--deterministic", action="store_true",
+                        help="enable slower deterministic cudnn/torch algorithms where available")
+    parser.add_argument("--skip-train", action="store_true")
+    parser.add_argument("--skip-eval", action="store_true")
     parser.add_argument("--dry-run", action="store_true",
-                        help="write configs and print train commands without launching training")
+                        help="write configs and print commands without launching training/eval")
     args = parser.parse_args()
 
     inits = selected_inits(args)
-    if args.resume and len(inits) > 1:
-        parser.error("--resume can only be used with --init pretrained or --init scratch")
+    if args.resume and (len(inits) > 1 or len(args.seeds) > 1):
+        parser.error("--resume can only be used with one --init and one --seeds value")
 
-    commands: list[list[str]] = []
+    jobs: list[tuple[list[str] | None, list[str] | None]] = []
     for init in inits:
-        cfg, config_path, slug = build_config(args, init)
-        write_yaml(config_path, cfg)
-        ensure_output_dirs(cfg)
-        cmd = build_train_command(args, config_path)
-        commands.append(cmd)
+        for seed in args.seeds:
+            cfg, config_path, slug = build_config(args, init, seed)
+            write_yaml(config_path, cfg)
+            ensure_output_dirs(cfg)
+            ckpt_path = resolve_run_path(cfg["training"]["checkpoint_dir"]) / "final_model.pt"
+            eval_path = resolve_run_path(args.eval_output_root) / f"{slug}_eval.json"
+            eval_path.parent.mkdir(parents=True, exist_ok=True)
 
-        env_prefix = f"WANDB_MODE={args.wandb_mode}"
-        printable = " ".join([env_prefix] + [shlex.quote(part) for part in cmd])
-        print(f"Run slug: {slug}")
-        print(f"Config written: {config_path}")
-        print(f"Train command: {printable}")
+            train_cmd = None if args.skip_train else build_train_command(args, config_path)
+            eval_cmd = None if args.skip_eval else build_eval_command(args, ckpt_path, eval_path)
+            jobs.append((train_cmd, eval_cmd))
+
+            print(f"Run slug: {slug}")
+            print(f"Config written: {config_path}")
+            print(f"Checkpoint dir: {ckpt_path.parent}")
+            print(f"Eval output: {eval_path}")
+            if train_cmd is not None:
+                print_command("Train command", train_cmd, args.wandb_mode)
+            if eval_cmd is not None:
+                print_command("Eval command", eval_cmd, args.wandb_mode)
 
     if args.dry_run:
         return 0
 
     env = os.environ.copy()
     env["WANDB_MODE"] = args.wandb_mode
-    for cmd in commands:
-        rc = subprocess.run(cmd, cwd=ROOT, env=env, check=False).returncode
-        if rc != 0:
-            return rc
+    for train_cmd, eval_cmd in jobs:
+        if train_cmd is not None:
+            rc = subprocess.run(train_cmd, cwd=ROOT, env=env, check=False).returncode
+            if rc != 0:
+                return rc
+        if eval_cmd is not None:
+            rc = subprocess.run(eval_cmd, cwd=ROOT, env=env, check=False).returncode
+            if rc != 0:
+                return rc
     return 0
 
 

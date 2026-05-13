@@ -13,6 +13,7 @@ import os
 import sys
 import argparse
 import time
+import random
 from collections import defaultdict
 from typing import Optional
 import yaml
@@ -48,6 +49,24 @@ from experiment.core.metrics import compute_all_metrics
 def load_config(path: str) -> dict:
     with open(path) as f:
         return yaml.safe_load(f)
+
+
+def set_global_seed(seed: int, deterministic: bool = False) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    if deterministic:
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+        torch.use_deterministic_algorithms(True, warn_only=True)
+
+
+def seed_worker(worker_id: int) -> None:
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
 
 
 def save_checkpoint(model, optimizer, epoch, vocab, config, path, scaler=None):
@@ -460,6 +479,11 @@ def train(
     t_cfg = config.get("training", {})
     l_cfg = config.get("logging", {})
 
+    seed = int(config.get("seed", 42))
+    deterministic = bool(t_cfg.get("deterministic", False))
+    set_global_seed(seed, deterministic=deterministic)
+    print(f"Seed: {seed} (deterministic={deterministic})")
+
     horizon = d_cfg.get("horizon", 120)
     max_seq_len = 16
     text_cfg = m_cfg.get("text_encoder", {})
@@ -509,13 +533,17 @@ def train(
     print(f"Text encoder: {text_encoder_type}")
 
     batch_size = t_cfg.get("batch_size", 64)
+    loader_generator = torch.Generator()
+    loader_generator.manual_seed(seed)
     loader = DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True,
         num_workers=4, pin_memory=True, drop_last=True,
+        worker_init_fn=seed_worker, generator=loader_generator,
     )
     val_loader = DataLoader(
         val_dataset, batch_size=batch_size, shuffle=False,
         num_workers=2, pin_memory=True, drop_last=False,
+        worker_init_fn=seed_worker,
     )
 
     # ── Model ─────────────────────────────────────────────────────────────────
@@ -565,8 +593,12 @@ def train(
     max_train_batches = int(max_train_batches) if max_train_batches is not None else None
     use_amp = t_cfg.get("use_amp", True) and device.type == "cuda"
     scaler = GradScaler(enabled=use_amp)
-    ckpt_dir = str(_ROOT / t_cfg.get("checkpoint_dir", "checkpoints"))
-    vis_dir = str(_ROOT / "results" / "train_vis")
+    def _project_path(value: str) -> str:
+        p = Path(value)
+        return str(p if p.is_absolute() else _ROOT / p)
+
+    ckpt_dir = _project_path(t_cfg.get("checkpoint_dir", "checkpoints"))
+    vis_dir = _project_path(l_cfg.get("vis_dir", "results/train_vis"))
     os.makedirs(ckpt_dir, exist_ok=True)
 
     start_epoch = 1

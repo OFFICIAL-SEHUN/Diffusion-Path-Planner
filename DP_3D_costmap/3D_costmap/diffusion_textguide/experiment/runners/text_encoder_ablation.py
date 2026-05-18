@@ -66,7 +66,7 @@ def main():
     parser.add_argument("--max-train-batches", type=int, default=None)
     parser.add_argument("--device", default=None)
     parser.add_argument("--seeds", type=int, nargs="+", default=None,
-                        help="Training seeds. Defaults to config seeds or 42 43 44.")
+                        help="Training seeds. Defaults to config seeds or 42")
     parser.add_argument(
         "--encoders",
         nargs="*",
@@ -127,7 +127,7 @@ def main():
         name = encoder["name"]
         encoder_type = encoder["type"]
         for seed in train_seeds:
-            run_name = name if len(train_seeds) == 1 else f"{name}_seed{seed}"
+            run_name = name
             cfg = copy.deepcopy(base_cfg)
             cfg["project_name"] = f"{cfg.get('project_name', 'DiffusionTextGuide')}_{run_name}"
             cfg["seed"] = int(seed)

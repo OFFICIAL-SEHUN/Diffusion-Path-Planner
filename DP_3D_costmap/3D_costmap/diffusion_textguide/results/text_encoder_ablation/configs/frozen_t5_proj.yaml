@@ -59,7 +59,7 @@ inference:
   show_progress: true
 logging:
   val_loss_interval: 200
-  val_interval: 1000
+  val_interval: 200
   log_dir: logs/text_encoder_ablation/frozen_t5_proj
   val_samples_per_intent: 10
   val_seed: 42

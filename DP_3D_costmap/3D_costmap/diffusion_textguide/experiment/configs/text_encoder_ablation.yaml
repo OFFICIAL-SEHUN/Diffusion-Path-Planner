@@ -29,7 +29,7 @@ seeds: [42]
 epochs: 5000
 batch_size: 128
 val_loss_interval: 200
-val_interval: 1000
+val_interval: 200
 train_val_seed: 42
 train_val_samples_per_intent: 10
 train_val_num_seeds: 1

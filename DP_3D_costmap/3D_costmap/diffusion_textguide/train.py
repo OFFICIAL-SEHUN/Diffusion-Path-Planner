@@ -20,7 +20,7 @@ import yaml
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
 from pathlib import Path
 from tqdm import tqdm
@@ -221,7 +221,7 @@ def compute_val_loss(
         B = paths.shape[0]
         t = torch.randint(0, scheduler.timesteps, (B,), device=device)
         noisy_paths, noise = scheduler.forward_process(paths, t)
-        with autocast(enabled=use_amp):
+        with autocast("cuda", enabled=use_amp):
             pred_noise = model(
                 noisy_paths, t, costmaps,
                 start_pos=start_pos, goal_pos=goal_pos,
@@ -592,7 +592,7 @@ def train(
     max_train_batches = t_cfg.get("max_train_batches")
     max_train_batches = int(max_train_batches) if max_train_batches is not None else None
     use_amp = t_cfg.get("use_amp", True) and device.type == "cuda"
-    scaler = GradScaler(enabled=use_amp)
+    scaler = GradScaler("cuda", enabled=use_amp)
     def _project_path(value: str) -> str:
         p = Path(value)
         return str(p if p.is_absolute() else _ROOT / p)
@@ -709,7 +709,7 @@ def train(
             noisy_paths, noise = scheduler.forward_process(paths, t)
 
             optimizer.zero_grad(set_to_none=True)
-            with autocast(enabled=use_amp):
+            with autocast("cuda", enabled=use_amp):
                 pred_noise = model(
                     noisy_paths, t, costmaps,
                     start_pos=start_pos, goal_pos=goal_pos,

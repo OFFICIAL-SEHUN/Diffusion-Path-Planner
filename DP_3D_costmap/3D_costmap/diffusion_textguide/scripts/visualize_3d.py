@@ -12,6 +12,11 @@ Usage:
         --elev 20 --azim 250 \
         --save results/3d_vis/depth_fade.png
 
+    # 경로 없이 지형 + Start/Goal만:
+    python3 scripts/visualize_3d.py \
+        --pt data/raw/terrain_00001.pt \
+        --no-paths --elev 45 --azim 250
+
 권장 옵션:
     --surface-alpha 0.88
     --offset 0.05
@@ -331,6 +336,7 @@ def visualize_3d(
     pt_path: str | Path,
     save_path: str | Path | None = None,
     filter_intents: list[str] | None = None,
+    show_paths: bool = True,
     elev: float = 30.0,
     azim: float = 225.0,
     path_z_offset: float = 0.05,
@@ -356,16 +362,17 @@ def visualize_3d(
     if height_map.ndim != 2:
         raise ValueError(f"height_map must be 2D, got {height_map.shape}")
 
-    raw_paths = data["paths"]
-    paths = _to_numpy(raw_paths)
-    if paths.ndim == 2 and paths.shape[-1] == 2:
-        paths = paths[None, ...]
-
     img_size = data.get("img_size", None)
     if img_size is not None:
         img_size = int(_to_numpy(img_size).reshape(-1)[0])
 
     intent_types = list(data.get("intent_types", []))
+    paths = None
+    if show_paths:
+        raw_paths = data["paths"]
+        paths = _to_numpy(raw_paths)
+        if paths.ndim == 2 and paths.shape[-1] == 2:
+            paths = paths[None, ...]
     start = _row_col(data.get("start_position"))
     goal = _row_col(data.get("goal_position"))
     map_id = data.get("map_id", pt_path.stem)
@@ -418,92 +425,92 @@ def visualize_3d(
     # Force projection matrix to update.
     fig.canvas.draw()
 
-    terrain_depth_buffer, terrain_bounds = _build_terrain_depth_buffer(
-        ax=ax,
-        height_map=height_map,
-        buffer_res=depth_buffer_res,
-        paint_radius=depth_buffer_radius,
-    )
-
-    # Paths
-    colors = [
-        "#FF0000", "#FF3333", "#CC0000", "#FF5555", "#DD1111",
-        "#AA0000", "#FF2222", "#EE4444", "#BB0000", "#FF6666",
-    ]
-    filter_set = set(filter_intents) if filter_intents is not None else None
-    plotted_intents: list[str] = []
     legend_proxies: list[Line2D] = []
-    path_idx = 0
-
-    if hidden_linewidth is None:
-        hidden_linewidth = max(path_linewidth * 0.85, 1.0)
-
-    for i, path in enumerate(paths):
-        itype = intent_types[i] if i < len(intent_types) else f"path_{i}"
-        if filter_set is not None and itype not in filter_set:
-            continue
-
-        path_px = _path_to_pixels(path, width=w, height=h, img_size=img_size)
-        if len(path_px) < 2:
-            continue
-
-        dense_xyz = _densify_path(
-            path_px=path_px,
-            height_map=height_map,
-            z_offset=path_z_offset,
-            step_px=densify_step_px,
-        )
-        if len(dense_xyz) < 2:
-            continue
-
-        hidden_mask = _compute_hidden_mask(
+    if show_paths and paths is not None:
+        terrain_depth_buffer, terrain_bounds = _build_terrain_depth_buffer(
             ax=ax,
-            dense_xyz=dense_xyz,
-            terrain_depth_buffer=terrain_depth_buffer,
-            terrain_bounds=terrain_bounds,
-            depth_tol=depth_tol,
-        )
-        hidden_segs, visible_segs = _split_segments_by_visibility(dense_xyz, hidden_mask)
-
-        color = colors[path_idx % len(colors)]
-        hidden_style = "--" if hidden_dashed else "solid"
-
-        # 1) 지형 뒤쪽 path: 완전히 가리지 말고 흐릿하게 overlay한다.
-        _add_segments(
-            ax,
-            hidden_segs,
-            color=color,
-            linewidth=hidden_linewidth,
-            alpha=hidden_alpha,
-            zorder=800,
-            linestyle=hidden_style,
+            height_map=height_map,
+            buffer_res=depth_buffer_res,
+            paint_radius=depth_buffer_radius,
         )
 
-        # 2) 지형 앞쪽 path: outline + foreground로 선명하게 표시한다.
-        _add_segments(
-            ax,
-            visible_segs,
-            color="black",
-            linewidth=visible_outline_width,
-            alpha=0.88,
-            zorder=1000,
-            linestyle="solid",
-        )
-        _add_segments(
-            ax,
-            visible_segs,
-            color=color,
-            linewidth=path_linewidth,
-            alpha=1.0,
-            zorder=1001,
-            linestyle="solid",
-        )
+        colors = [
+            "#FF0000", "#FF3333", "#CC0000", "#FF5555", "#DD1111",
+            "#AA0000", "#FF2222", "#EE4444", "#BB0000", "#FF6666",
+        ]
+        filter_set = set(filter_intents) if filter_intents is not None else None
+        plotted_intents: list[str] = []
+        path_idx = 0
 
-        if itype not in plotted_intents:
-            plotted_intents.append(itype)
-            legend_proxies.append(Line2D([0], [0], color=color, linewidth=path_linewidth, label=itype))
+        if hidden_linewidth is None:
+            hidden_linewidth = max(path_linewidth * 0.85, 1.0)
 
-        path_idx += 1
+        for i, path in enumerate(paths):
+            itype = intent_types[i] if i < len(intent_types) else f"path_{i}"
+            if filter_set is not None and itype not in filter_set:
+                continue
+
+            path_px = _path_to_pixels(path, width=w, height=h, img_size=img_size)
+            if len(path_px) < 2:
+                continue
+
+            dense_xyz = _densify_path(
+                path_px=path_px,
+                height_map=height_map,
+                z_offset=path_z_offset,
+                step_px=densify_step_px,
+            )
+            if len(dense_xyz) < 2:
+                continue
+
+            hidden_mask = _compute_hidden_mask(
+                ax=ax,
+                dense_xyz=dense_xyz,
+                terrain_depth_buffer=terrain_depth_buffer,
+                terrain_bounds=terrain_bounds,
+                depth_tol=depth_tol,
+            )
+            hidden_segs, visible_segs = _split_segments_by_visibility(dense_xyz, hidden_mask)
+
+            color = colors[path_idx % len(colors)]
+            hidden_style = "--" if hidden_dashed else "solid"
+
+            # 1) 지형 뒤쪽 path: 완전히 가리지 말고 흐릿하게 overlay한다.
+            _add_segments(
+                ax,
+                hidden_segs,
+                color=color,
+                linewidth=hidden_linewidth,
+                alpha=hidden_alpha,
+                zorder=800,
+                linestyle=hidden_style,
+            )
+
+            # 2) 지형 앞쪽 path: outline + foreground로 선명하게 표시한다.
+            _add_segments(
+                ax,
+                visible_segs,
+                color="black",
+                linewidth=visible_outline_width,
+                alpha=0.88,
+                zorder=1000,
+                linestyle="solid",
+            )
+            _add_segments(
+                ax,
+                visible_segs,
+                color=color,
+                linewidth=path_linewidth,
+                alpha=1.0,
+                zorder=1001,
+                linestyle="solid",
+            )
+
+            if itype not in plotted_intents:
+                plotted_intents.append(itype)
+                legend_proxies.append(Line2D([0], [0], color=color, linewidth=path_linewidth, label=itype))
+
+            path_idx += 1
 
     # Start / Goal markers
     marker_proxies: list[Line2D] = []
@@ -598,6 +605,7 @@ def main() -> None:
     ap.add_argument("--pt", required=True, help=".pt 파일 경로")
     ap.add_argument("--save", default=None, help="저장 경로. 미지정 시 plt.show()")
     ap.add_argument("--intents", nargs="*", default=None, help="표시할 intent 목록. 미지정 시 전체 표시")
+    ap.add_argument("--no-paths", action="store_true", help="경로를 그리지 않고 지형 + Start/Goal만 표시")
     ap.add_argument("--elev", type=float, default=30.0, help="3D view elevation")
     ap.add_argument("--azim", type=float, default=225.0, help="3D view azimuth")
     ap.add_argument("--offset", type=float, default=0.05, help="path를 surface 위로 살짝 띄우는 높이 m")
@@ -626,6 +634,7 @@ def main() -> None:
         pt_path=pt,
         save_path=args.save,
         filter_intents=args.intents,
+        show_paths=not args.no_paths,
         elev=args.elev,
         azim=args.azim,
         path_z_offset=args.offset,

@@ -52,3 +52,11 @@ DP_3D_costmap/3D_costmap/diffusion_textguide/results/similarity/
 *.doc
 *.csv
 *.md
+
+# Diffusion TextGuide generated experiment outputs
+DP_3D_costmap/3D_costmap/diffusion_textguide/results/**/*.json
+DP_3D_costmap/3D_costmap/diffusion_textguide/results/**/*.jsonl
+DP_3D_costmap/3D_costmap/diffusion_textguide/results/**/*.txt
+DP_3D_costmap/3D_costmap/diffusion_textguide/results/**/*.tex
+DP_3D_costmap/3D_costmap/diffusion_textguide/logs/
+DP_3D_costmap/3D_costmap/diffusion_textguide/wandb/

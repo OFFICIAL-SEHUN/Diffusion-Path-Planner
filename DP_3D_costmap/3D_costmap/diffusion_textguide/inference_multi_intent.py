@@ -1,12 +1,13 @@
 """
-Multi-intent inference — Height map (row 1) + Slope map (row 2), one column per intent.
+Multi-intent inference — 2x4 height-map grid from the 10-intent catalog.
 
-Intents = every key in ``data/instruction/train/inst_train.json``: ``INTENT_CATALOG`` order
-first, then any extra template-only types (e.g. ``short_path``) sorted alphabetically.
-Each column uses the first template sentence for that type.
+Shows all train-template types except ``baseline`` and ``energy_efficient``
+(catalog order). Row 1: intents 1–4, row 2: intents 5–8.
 
 Usage:
-  python inference_6intent.py --checkpoint checkpoints/final_model.pt    --terrain data/raw/terrain_05000.pt   --output results/inference_all_intents.png
+  python inference_multi_intent.py --checkpoint checkpoints/backbone_ablation_10intent/final_model.pt \\
+      --terrain data/raw/terrain_05000.pt \\
+      --output results/inference_all_intents_backbone_ablation_8intent.png
 """
 
 import argparse
@@ -17,6 +18,10 @@ import torch
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+from matplotlib import font_manager
+from matplotlib.colors import Normalize
+from matplotlib.lines import Line2D
 from pathlib import Path
 
 import sys
@@ -38,6 +43,10 @@ from text_conditioning import (
 
 INSTRUCTION_TEMPLATES = load_instruction_templates("train")
 
+# Omit from grid (10 train intents → 8 panels in 2×4 layout).
+EXCLUDED_INTENTS = frozenset({"baseline", "energy_efficient"})
+GRID_COLS = 4
+
 
 def _first_instruction(itype: str) -> str:
     templates = INSTRUCTION_TEMPLATES.get(itype)
@@ -57,10 +66,14 @@ def _intent_types_in_order() -> list[str]:
     seen: set[str] = set()
     out: list[str] = []
     for t in catalog_order:
+        if t in EXCLUDED_INTENTS:
+            continue
         if t in INSTRUCTION_TEMPLATES and t not in seen:
             out.append(t)
             seen.add(t)
     for t in sorted(INSTRUCTION_TEMPLATES.keys()):
+        if t in EXCLUDED_INTENTS:
+            continue
         if t not in seen:
             out.append(t)
             seen.add(t)
@@ -74,6 +87,67 @@ INTENT_LABELS = [
 ]
 
 PATH_COLORS = ["#E63946"] * len(INTENTS)
+
+# Start / goal: small on-map markers; meaning explained in figure legend.
+START_GOAL_SCATTER_SIZE = 100
+START_COLOR = "lime"
+GOAL_COLOR = "orange"
+
+
+def _configure_plot_font() -> None:
+    """Use Times New Roman for all figure text (serif fallback on Linux)."""
+    available = {f.name for f in font_manager.fontManager.ttflist}
+    if "Times New Roman" in available:
+        family = "Times New Roman"
+    else:
+        family = next(
+            (
+                name for name in ("Times", "Nimbus Roman", "Liberation Serif")
+                if name in available
+            ),
+            "DejaVu Serif",
+        )
+        print(f"[Font] 'Times New Roman' not installed; using {family}")
+
+    plt.rcParams.update(
+        {
+            "font.family": family,
+            "font.serif": [
+                "Times New Roman",
+                "Times",
+                "Nimbus Roman",
+                "Liberation Serif",
+                "DejaVu Serif",
+            ],
+            "mathtext.fontset": "stix",
+        }
+    )
+
+
+_START_GOAL_LEGEND_HANDLES = [
+    Line2D(
+        [0], [0],
+        marker="o",
+        color="w",
+        markerfacecolor=START_COLOR,
+        markeredgecolor="black",
+        markeredgewidth=0.6,
+        markersize=8,
+        linestyle="None",
+        label="Start",
+    ),
+    Line2D(
+        [0], [0],
+        marker="*",
+        color="w",
+        markerfacecolor=GOAL_COLOR,
+        markeredgecolor="black",
+        markeredgewidth=0.6,
+        markersize=10,
+        linestyle="None",
+        label="Goal",
+    ),
+]
 
 
 def _resolve_text_encoder_type(m_cfg: dict, state_dict: dict) -> str:
@@ -187,52 +261,87 @@ def run_inference(
 
 
 def visualize_intents(height_map, slope_map, gen_paths, gt_paths, img_size,
-                      out_path, show_gt=True, terrain_note=None):
-    """Row 1: Height map × N intents, Row 2: Slope map × N intents."""
+                      out_path, show_gt=True):
+    """2 rows × 4 columns height-map grid, one panel per intent."""
     n = len(INTENTS)
-    fig, axes = plt.subplots(2, n, figsize=(min(4.0 * n, 56), 8.5), squeeze=False)
+    ncols = GRID_COLS
+    nrows = (n + ncols - 1) // ncols
+    _configure_plot_font()
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(4.0 * ncols + 0.9, 4.25 * nrows), squeeze=False,
+    )
 
     def to_px(p):
         return (p + 1) / 2 * img_size
 
-    draw_gt = show_gt and gt_paths is not None
+    legend_fs = max(10, min(12, 144 // max(ncols, 1)))
+    title_fs = max(14, min(16, 440 // max(ncols, 1)))
 
-    row_configs = [
-        (height_map, "terrain", None, None, "Height map"),
-        (slope_map,  "jet",     0,    35,   "Slope map (deg)"),
-    ]
+    for idx in range(nrows * ncols):
+        row, col = divmod(idx, ncols)
+        ax = axes[row, col]
+        if idx >= n:
+            ax.axis("off")
+            continue
 
-    for row, (bg_map, cmap, vmin, vmax, row_label) in enumerate(row_configs):
-        for col in range(n):
-            ax = axes[row, col]
-            ax.imshow(bg_map, cmap=cmap, origin="lower", vmin=vmin, vmax=vmax)
+        ax.imshow(height_map, cmap="terrain", origin="lower")
 
-            gen_px = to_px(gen_paths[col])
-            ax.plot(gen_px[:, 0], gen_px[:, 1], color=PATH_COLORS[col],
-                    lw=2.2, alpha=0.95,
-                    label="Generated" if col == 0 and row == 0 else None)
-            ax.scatter([gen_px[0, 0]], [gen_px[0, 1]], c="lime", s=50,
-                       zorder=10, marker="o", edgecolors="black", linewidths=0.8)
-            ax.scatter([gen_px[-1, 0]], [gen_px[-1, 1]], c="orange", s=50,
-                       zorder=10, marker="*", edgecolors="black", linewidths=0.8)
+        gen_px = to_px(gen_paths[idx])
+        ax.plot(gen_px[:, 0], gen_px[:, 1], color=PATH_COLORS[idx],
+                lw=2.2, alpha=0.95)
+        ax.scatter(
+            [gen_px[0, 0]], [gen_px[0, 1]],
+            c=START_COLOR,
+            s=START_GOAL_SCATTER_SIZE,
+            zorder=10,
+            marker="o",
+            edgecolors="black",
+            linewidths=0.5,
+        )
+        ax.scatter(
+            [gen_px[-1, 0]], [gen_px[-1, 1]],
+            c=GOAL_COLOR,
+            s=START_GOAL_SCATTER_SIZE,
+            zorder=10,
+            marker="*",
+            edgecolors="black",
+            linewidths=1.0,
+        )
 
-            if row == 0:
-                fs = max(7, min(13, 220 // max(n, 1)))
-                ax.set_title(INTENT_LABELS[col], fontsize=fs, fontweight="bold")
-            ax.set_xticks([])
-            ax.set_yticks([])
-            for spine in ax.spines.values():
-                spine.set_visible(False)
+        ax.legend(
+            handles=_START_GOAL_LEGEND_HANDLES,
+            loc="upper right",
+            fontsize=legend_fs,
+            framealpha=0.88,
+            handlelength=0.9,
+            handletextpad=0.25,
+            borderpad=0.25,
+            labelspacing=0.2,
+        )
 
-        axes[row, 0].set_ylabel(row_label, fontsize=13, fontweight="bold",
-                                labelpad=10)
+        ax.set_title(INTENT_LABELS[idx], fontsize=title_fs, fontweight="bold")
+        ax.set_xticks([])
+        ax.set_yticks([])
+        for spine in ax.spines.values():
+            spine.set_visible(False)
 
-    suptitle = f"{n}-Intent Comparison"
-    if terrain_note:
-        suptitle += f"  ·  {terrain_note}"
-    fig.suptitle(suptitle, fontsize=18, fontweight="bold", y=1.01)
+    # Leave space on the right for the height colorbar.
+    fig.tight_layout(rect=[0, 0, 0.92, 1])
 
-    fig.tight_layout()
+    # Vertical colorbar (height range bar) spanning the full figure height on the right.
+    vmin, vmax = float(height_map.min()), float(height_map.max())
+    norm = Normalize(vmin=vmin, vmax=vmax)
+    sm = cm.ScalarMappable(cmap="terrain", norm=norm)
+    sm.set_array([])
+
+    # [left, bottom, width, height] in figure-fraction coordinates
+    cbar_ax = fig.add_axes([0.935, 0.06, 0.018, 0.88])
+    cbar = fig.colorbar(sm, cax=cbar_ax, orientation="vertical")
+    cbar.set_label("Height (m)", fontsize=max(14, title_fs), fontweight="bold", labelpad=10)
+    cbar.ax.tick_params(labelsize=max(13, legend_fs + 1))
+    for tick_label in cbar.ax.get_yticklabels():
+        tick_label.set_fontweight("bold")
+
     if out_path:
         fig.savefig(out_path, dpi=150, bbox_inches="tight")
         print(f"Saved: {out_path}")
@@ -248,8 +357,6 @@ def main():
     ap.add_argument("--device", type=str, default="cuda")
     ap.add_argument("--no-gt", action="store_true",
                     help="Do not draw reference paths")
-    ap.add_argument("--terrain-note", type=str, default=None,
-                    help="e.g. 'Unseen terrain' — shown in title")
     args = ap.parse_args()
 
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
@@ -331,7 +438,6 @@ def main():
     visualize_intents(
         height_map, slope_map, gen_paths, gt_paths, img_size, out_path,
         show_gt=not args.no_gt,
-        terrain_note=args.terrain_note,
     )
 
 

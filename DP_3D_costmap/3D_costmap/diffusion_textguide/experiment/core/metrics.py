@@ -469,38 +469,44 @@ def pointwise_l2(path_a: np.ndarray, path_b: np.ndarray) -> float:
     return float(np.mean(np.linalg.norm(path_a - path_b, axis=1)))
 
 
+def _pairwise_l2(path_a: np.ndarray, path_b: np.ndarray) -> np.ndarray:
+    """Pairwise L2 distances for two short path sequences."""
+    a = np.asarray(path_a, dtype=np.float32)
+    b = np.asarray(path_b, dtype=np.float32)
+    diff = a[:, None, :] - b[None, :, :]
+    return np.sqrt(np.sum(diff * diff, axis=-1, dtype=np.float32), dtype=np.float32)
+
+
 def chamfer_distance(path_a: np.ndarray, path_b: np.ndarray) -> float:
     """Symmetric Chamfer distance: mean of nearest-neighbour distances."""
-    from scipy.spatial.distance import cdist
-    D = cdist(path_a, path_b)
+    D = _pairwise_l2(path_a, path_b)
     d_a2b = D.min(axis=1).mean()
     d_b2a = D.min(axis=0).mean()
     return float((d_a2b + d_b2a) / 2.0)
 
 
 def frechet_distance(path_a: np.ndarray, path_b: np.ndarray) -> float:
-    """Discrete Fréchet distance (DP approach)."""
-    n, m = len(path_a), len(path_b)
-    ca = np.full((n, m), -1.0)
+    """Discrete Fréchet distance using iterative DP.
 
-    def _dist(i, j):
-        return np.linalg.norm(path_a[i] - path_b[j])
-
-    def _c(i, j):
-        if ca[i, j] > -0.5:
-            return ca[i, j]
-        d = _dist(i, j)
-        if i == 0 and j == 0:
-            ca[i, j] = d
-        elif i == 0:
-            ca[i, j] = max(_c(0, j - 1), d)
-        elif j == 0:
-            ca[i, j] = max(_c(i - 1, 0), d)
-        else:
-            ca[i, j] = max(min(_c(i - 1, j), _c(i - 1, j - 1), _c(i, j - 1)), d)
-        return ca[i, j]
-
-    return float(_c(n - 1, m - 1))
+    The previous recursive implementation was correct but extremely slow for
+    large evaluation sweeps because it invoked Python recursion and
+    ``np.linalg.norm`` for every DP cell. The iterative form precomputes the
+    pairwise distance matrix once and fills the DP table in row-major order.
+    """
+    D = _pairwise_l2(path_a, path_b)
+    n, m = D.shape
+    ca = np.empty((n, m), dtype=np.float32)
+    ca[0, 0] = D[0, 0]
+    for i in range(1, n):
+        ca[i, 0] = max(ca[i - 1, 0], D[i, 0])
+    for j in range(1, m):
+        ca[0, j] = max(ca[0, j - 1], D[0, j])
+    for i in range(1, n):
+        prev = ca[i - 1]
+        curr = ca[i]
+        for j in range(1, m):
+            curr[j] = max(min(prev[j], prev[j - 1], curr[j - 1]), D[i, j])
+    return float(ca[n - 1, m - 1])
 
 
 # ═══════════════════════════════════════════════════════════════════════════

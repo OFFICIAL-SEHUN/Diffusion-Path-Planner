@@ -38,7 +38,9 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.font_manager import FontProperties, fontManager
 from matplotlib.tri import Triangulation, TriAnalyzer
+from mpl_toolkits.mplot3d import proj3d
 
 
 OBJECTIVES = ["cot_mean", "risk_mean", "isr_mean"]
@@ -61,19 +63,63 @@ def _safe_pearson_r(x: np.ndarray, y: np.ndarray) -> float:
     return float(np.corrcoef(x, y)[0, 1])
 
 
+def _resolve_serif_font(preferred: str = "Times New Roman") -> str:
+    """Pick Times New Roman when installed, else closest Times-like serif."""
+    available = {f.name for f in fontManager.ttflist}
+    if preferred in available:
+        return preferred
+    for name in (
+        "Times",
+        "Nimbus Roman",
+        "Liberation Serif",
+        "STIXGeneral",
+        "STIX Two Text",
+        "DejaVu Serif",
+    ):
+        if name in available:
+            return name
+    return "serif"
+
+
 def _paper_rcparams() -> None:
+    serif = _resolve_serif_font()
+    if serif != "Times New Roman":
+        print(f"[Font] 'Times New Roman' not installed; using {serif}")
     plt.rcParams.update(
         {
             "figure.dpi": 120,
             "savefig.dpi": 300,
             "font.size": 10,
-            "axes.labelsize": 10,
-            "axes.titlesize": 11,
-            "legend.fontsize": 8,
-            "xtick.labelsize": 9,
-            "ytick.labelsize": 9,
+            "font.family": serif,
+            "font.serif": [
+                "Times New Roman",
+                "Times",
+                "Nimbus Roman",
+                "Liberation Serif",
+                "STIXGeneral",
+                "STIX Two Text",
+                "DejaVu Serif",
+            ],
+            "mathtext.fontset": "stix",
+            "axes.labelsize": 16,
+            "axes.titlesize": 17,
+            "legend.fontsize": 10,
+            "xtick.labelsize": 12,
+            "ytick.labelsize": 12,
         }
     )
+
+
+def load_balanced_pick(path: Path) -> Optional[pd.Series]:
+    """Load evaluator ``balanced_pick.json`` (per-intent floors + utopia distance)."""
+    if not path.is_file():
+        return None
+    with open(path, encoding="utf-8") as f:
+        payload = json.load(f)
+    best = payload.get("best")
+    if not best:
+        return None
+    return pd.Series(best)
 
 
 def load_results(path: Path) -> pd.DataFrame:
@@ -107,6 +153,103 @@ def filter_finite_objectives(df: pd.DataFrame, cols: Optional[list[str]] = None)
 
 def format_weights(a: float, b: float, g: float, d: float) -> str:
     return f"({a:g}, {b:g}, {g:g}, {d:g})"
+
+
+def _project_3d_to_display(ax, x: float, y: float, z: float) -> tuple[float, float]:
+    """Project a 3-D data point to 2-D display (pixel) coordinates."""
+    x2, y2, _ = proj3d.proj_transform(float(x), float(y), float(z), ax.get_proj())
+    disp = ax.transData.transform((x2, y2))
+    return float(disp[0]), float(disp[1])
+
+
+def _estimate_label_box(text: str, fontsize: float) -> tuple[float, float]:
+    lines = text.split("\n")
+    max_len = max(len(line) for line in lines)
+    width = max(34.0, 5.8 * max_len)
+    height = max(10.0, 11.0 * len(lines))
+    return width * (fontsize / 6.0), height * (fontsize / 6.0)
+
+
+def _spread_3d_text_labels(
+    ax,
+    entries: list[dict],
+    *,
+    x_span: float,
+    y_span: float,
+    z_span: float,
+) -> None:
+    """Place ``ax.text`` labels with 3-D data offsets to reduce overlap."""
+    if not entries:
+        return
+
+    ax.figure.canvas.draw()
+    dirs_3d = [
+        (0.06, 0.10, 0.012),
+        (0.06, -0.10, 0.012),
+        (-0.06, 0.10, 0.012),
+        (-0.06, -0.10, 0.012),
+        (0.0, 0.14, 0.018),
+        (0.0, -0.14, 0.018),
+        (0.12, 0.0, 0.010),
+        (-0.12, 0.0, 0.010),
+        (0.10, 0.12, 0.016),
+        (-0.10, 0.12, 0.016),
+        (0.10, -0.12, 0.016),
+        (-0.10, -0.12, 0.016),
+    ]
+    sx = max(x_span * 0.04, 0.15)
+    sy = max(y_span * 0.04, 0.20)
+    sz = max(z_span * 0.08, 0.004)
+
+    placed_boxes: list[tuple[float, float, float, float]] = []
+
+    for ent in entries:
+        x0, y0, z0 = float(ent["x"]), float(ent["y"]), float(ent["z"])
+        fs = float(ent.get("fontsize", 5))
+        tw, th = _estimate_label_box(ent["text"], fs)
+        pad = float(ent.get("pad", 12.0))
+
+        chosen = dirs_3d[0]
+        for dx, dy, dz in ent.get("dirs_3d", dirs_3d):
+            tx = x0 + dx * sx
+            ty = y0 + dy * sy
+            tz = z0 + dz * sz
+            px, py = _project_3d_to_display(ax, tx, ty, tz)
+            overlaps = False
+            for bx, by, bw, bh in placed_boxes:
+                if abs(px - bx) < (tw + bw) / 2 + pad and abs(py - by) < (th + bh) / 2 + pad:
+                    overlaps = True
+                    break
+            if not overlaps:
+                chosen = (dx, dy, dz)
+                break
+
+        dx, dy, dz = chosen
+        tx = x0 + dx * sx
+        ty = y0 + dy * sy
+        tz = z0 + dz * sz
+        px, py = _project_3d_to_display(ax, tx, ty, tz)
+        placed_boxes.append((px, py, tw, th))
+
+        family = ent.get("fontfamily") or ent.get("fontname") or plt.rcParams["font.family"]
+        weight = ent.get("fontweight") or ent.get("weight") or "normal"
+        fontprops = FontProperties(
+            family=family,
+            weight=weight,
+            size=fs,
+        )
+        ax.text(
+            tx,
+            ty,
+            tz,
+            ent["text"],
+            fontproperties=fontprops,
+            color=ent.get("color", "0.15"),
+            alpha=ent.get("alpha", 0.9),
+            ha=ent.get("ha", "center"),
+            va=ent.get("va", "center"),
+            zorder=ent.get("zorder", 200),
+        )
 
 
 def is_dominated(
@@ -415,15 +558,18 @@ def plot_pareto_cot_risk(df: pd.DataFrame, intent: str, out_base: Path) -> None:
     fig.savefig(f"{stem}.png", bbox_inches="tight")
     plt.close(fig)
 
-def plot_pareto_3d_weight_frontier(cross: pd.DataFrame, out_base: Path) -> None:
+def plot_pareto_3d_weight_frontier(
+    cross: pd.DataFrame,
+    out_base: Path,
+    balanced: Optional[pd.Series] = None,
+) -> None:
     """
     3-D Pareto front over weight tuples (α,β,γ,δ).
 
     Improvements:
       1. Highlight selected balanced tuple with a black star.
-      2. Add colorbar where color = mean_ISR.
-      3. Reduce Delaunay mesh opacity.
-      4. Improve layout: avoid clipped left label and move z-label away from colorbar.
+      2. Single-color Pareto points and surface mesh.
+      3. Improve layout: avoid clipped left label.
     """
     req = ["mean_cot", "mean_risk", "mean_isr", "mean_feasibility"]
     if cross.empty or not all(c in cross.columns for c in req):
@@ -437,23 +583,40 @@ def plot_pareto_3d_weight_frontier(cross: pd.DataFrame, out_base: Path) -> None:
     if front.empty:
         return
 
-    # Use the same balanced-selection rule used in recommended_tuples.md
-    recs = select_recommended_tuples(cross)
-    balanced = recs.get("balanced", None)
+    if balanced is None:
+        recs = select_recommended_tuples(cross)
+        balanced = recs.get("balanced", None)
 
     xc = front["mean_cot"].to_numpy(dtype=float)
     yc = front["mean_risk"].to_numpy(dtype=float)
     zc = front["mean_isr"].to_numpy(dtype=float)
 
-    fig = plt.figure(figsize=(10.5, 7.4))
+    fig = plt.figure(figsize=(10.5, 7.5))
     ax = fig.add_subplot(111, projection="3d")
 
     # IMPORTANT:
     # 3D plots do not behave well with tight_layout alone.
-    # Manually reserve more left margin and colorbar space.
-    fig.subplots_adjust(left=0.10, right=0.84, top=0.90, bottom=0.08)
+    # Do not use bbox_inches="tight" on save — it recomputes canvas size from
+    # projected artists and ignores figsize height.
+    fig.subplots_adjust(left=0.14, right=0.95, top=0.88, bottom=0.10)
 
-    # Delaunay mesh: lower alpha so the points remain readable
+    pareto_color = "#4C72B0"
+
+    # Draw points first; mesh is layered on top (Pareto surface over samples).
+    ax.scatter(
+        xc,
+        yc,
+        zc,
+        s=28,
+        c=pareto_color,
+        alpha=0.88,
+        depthshade=False,
+        edgecolors="0.15",
+        linewidths=0.25,
+        label="Pareto weight tuples",
+        zorder=1,
+    )
+
     if len(xc) >= 3 and np.ptp(xc) > 1e-15 and np.ptp(yc) > 1e-15:
         try:
             tri = Triangulation(xc, yc)
@@ -463,129 +626,150 @@ def plot_pareto_3d_weight_frontier(cross: pd.DataFrame, out_base: Path) -> None:
             except Exception:
                 pass
 
-            ax.plot_trisurf(
+            surf = ax.plot_trisurf(
                 tri,
                 zc,
-                alpha=0.18,
                 cmap="coolwarm",
-                linewidth=0.20,
-                edgecolor="0.45",
+                alpha=0.48,
+                linewidth=0.12,
+                edgecolor=(1.0, 1.0, 1.0, 0.35),
                 antialiased=True,
                 shade=True,
+                zorder=10,
             )
+            surf.set_zorder(10)
         except (RuntimeError, ValueError):
             pass
 
-    # Pareto points: color = mean_ISR
-    feas = front["mean_feasibility"].fillna(0).to_numpy(dtype=float)
-    if np.ptp(feas) > 1e-9:
-        fe_n = (feas - feas.min()) / (feas.max() - feas.min())
-        point_sizes = np.clip(12 + 32 * fe_n, 14, 48)
-    else:
-        point_sizes = np.full_like(xc, 24.0, dtype=float)
+    ax.set_zlabel("")
+    # ax.set_title(
+    #     "Cross-intent Pareto front over weight tuples (α, β, γ, δ)", pad=14,
+    # )
+    ax.view_init(elev=22, azim=42)
+    ax.set_box_aspect((1.0, 1.0, 0.8))
 
-    sc = ax.scatter(
-        xc,
-        yc,
-        zc,
-        s=point_sizes,
-        c=zc,
-        cmap="coolwarm",
-        alpha=0.95,
-        depthshade=True,
-        edgecolors="0.15",
-        linewidths=0.25,
-        label="Pareto weight tuples",
-    )
-
-    # Highlight balanced pick
-    if balanced is not None:
-        bx = float(balanced["mean_cot"])
-        by = float(balanced["mean_risk"])
-        bz = float(balanced["mean_isr"])
-
-        ax.scatter(
-            [bx],
-            [by],
-            [bz],
-            s=230,
-            marker="*",
-            c="black",
-            edgecolors="white",
-            linewidths=0.8,
-            depthshade=False,
-            label="Selected balanced tuple",
-        )
-
-        label = (
-            "Selected\n"
-            f"α={balanced['alpha']:g}, β={balanced['beta']:g}, "
-            f"γ={balanced['gamma']:g}, δ={balanced['delta']:g}"
-        )
-
-        ax.text(
-            bx,
-            by,
-            bz + 0.006,
-            label,
-            fontsize=7,
-            color="black",
-        )
-
-    # Label only a few high-ISR points to avoid clutter
-    top = front.nlargest(4, "mean_isr")
-    for _, r in top.iterrows():
-        lbl = format_weights(r["alpha"], r["beta"], r["gamma"], r["delta"])
-        ax.text(
-            float(r["mean_cot"]),
-            float(r["mean_risk"]),
-            float(r["mean_isr"]),
-            lbl,
-            fontsize=5,
-            alpha=0.85,
-        )
-
-    # Axis labels
-    ax.set_xlabel("mean_CoT (↓, over intents)", labelpad=10)
-    ax.set_ylabel("mean_risk (↓, over intents)", labelpad=14)
-
-    # Remove default z-label and place it manually on the left side
+    ax.set_xlabel("Mean CoT ↓", labelpad=10)
+    ax.set_ylabel("Mean Risk ↓", labelpad=14)
     ax.set_zlabel("")
     ax.text2D(
-        -0.06, 0.52,
-        "mean_ISR (↑, over intents)",
+        -0.14, 0.52,
+        "Mean ISR ↑",
         transform=ax.transAxes,
         rotation=90,
         va="center",
         ha="center",
-        fontsize=10,
+        fontsize=16,
     )
+    ax.tick_params(axis="z", pad=5)
 
-    ax.set_title(
-        "Cross-intent Pareto front over weight tuples (α, β, γ, δ)", pad=14,
-        # "Delaunay mesh in mean_CoT–mean_risk; height/color = mean_ISR",
-    )
+    label_entries: list[dict] = []
+    top = front.nlargest(3, "mean_isr")
+    for _, r in top.iterrows():
+        if balanced is not None:
+            same = (
+                float(r["alpha"]) == float(balanced["alpha"])
+                and float(r["beta"]) == float(balanced["beta"])
+                and float(r["gamma"]) == float(balanced["gamma"])
+                and float(r["delta"]) == float(balanced["delta"])
+            )
+            if same:
+                continue
+        # label_entries.append(
+        #     {
+        #         "x": float(r["mean_cot"]),
+        #         "y": float(r["mean_risk"]),
+        #         "z": float(r["mean_isr"]),
+        #         "text": format_weights(r["alpha"], r["beta"], r["gamma"], r["delta"]),
+        #         "fontsize": 5,
+        #         "alpha": 0.85,
+        #         "zorder": 150,
+        #     }
+        # )
 
-    # Colorbar: keep some spacing from the 3D axes
-    cbar = fig.colorbar(
-        sc,
-        ax=ax,
-        shrink=0.62,
-        # pad=0.10,
-        pad=0.02,
-        fraction=0.035
-    )
-    # cbar.set_label("mean_ISR (↑)", labelpad=10)
+    bx = by = bz = None
+    if balanced is not None:
+        bx = float(balanced["mean_cot"])
+        by = float(balanced["mean_risk"])
+        bz = float(balanced["mean_isr"])
+        label_entries.append(
+            {
+                "x": bx,
+                "y": by,
+                "z": bz,
+                "text": (
+                    "balanced tuple\n"
+                    f"α={balanced['alpha']:g}, β={balanced['beta']:g}, "
+                    f"γ={balanced['gamma']:g}, δ={balanced['delta']:g} \n\n"
+                ),
+                # "weight": "bold",
+                "fontsize": 18,
+                "fontfamily": _resolve_serif_font(),
+                "color": "black",
+                "alpha": 1.0,
+                "pad": 18.0,
+                "dirs_3d": [
+                    (0.0, 0.18, 0.22),
+                    (0.0, 0.22, 0.18),
+                    (0.10, 0.16, 0.20),
+                    (-0.10, 0.16, 0.20),
+                    (0.12, 0.0, 0.24),
+                    (-0.12, 0.0, 0.24),
+                ],
+                "ha": "center",
+                "va": "bottom",
+                "zorder": 300,
+            }
+        )
+   
 
-    ax.legend(loc="upper left")
-    ax.view_init(elev=22, azim=42)
+    x_span = float(np.ptp(xc)) if np.ptp(xc) > 1e-15 else 1.0
+    y_span = float(np.ptp(yc)) if np.ptp(yc) > 1e-15 else 1.0
+    z_span = float(np.ptp(zc)) if np.ptp(zc) > 1e-15 else 0.01
+    _spread_3d_text_labels(ax, label_entries, x_span=x_span, y_span=y_span, z_span=z_span)
+
+    # ax.legend(
+    #     loc="upper left",
+    #     bbox_to_anchor=(0.0, 1.0),
+    #     borderaxespad=0.2,
+    # )
+
+    if balanced is not None:
+        ax.scatter(
+            [bx],
+            [by],
+            [bz],
+            s=120,
+            marker="o",
+            c="white",
+            edgecolors="black",
+            linewidths=0.9,
+            depthshade=False,
+            zorder=998,
+        )
+        ax.plot(
+            [bx],
+            [by],
+            [bz],
+            linestyle="",
+            marker="*",
+            markersize=16,
+            markeredgewidth=1.2,
+            markeredgecolor="black",
+            markerfacecolor="black",
+            label="Selected balanced tuple",
+            zorder=1000,
+        )
 
     # Do NOT rely only on tight_layout for 3D
     # fig.tight_layout()  # optional, but usually not needed / sometimes harmful for 3D
-    fig.savefig(out_base / "pareto_3d_weight_frontier.png", bbox_inches="tight")
+    fig.savefig(out_base / "pareto_3d_weight_frontier.png", pad_inches=0.08)
     plt.close(fig)
 
-def plot_pareto_2d_cot_risk_isr_projection(cross: pd.DataFrame, out_base: Path) -> None:
+def plot_pareto_2d_cot_risk_isr_projection(
+    cross: pd.DataFrame,
+    out_base: Path,
+    balanced: Optional[pd.Series] = None,
+) -> None:
     """
     2-D projection of the weight-level Pareto front.
 
@@ -606,8 +790,9 @@ def plot_pareto_2d_cot_risk_isr_projection(cross: pd.DataFrame, out_base: Path) 
     if front.empty:
         return
 
-    recs = select_recommended_tuples(cross)
-    balanced = recs.get("balanced", None)
+    if balanced is None:
+        recs = select_recommended_tuples(cross)
+        balanced = recs.get("balanced", None)
 
     fig, ax = plt.subplots(figsize=(7.0, 5.6))
 
@@ -642,13 +827,13 @@ def plot_pareto_2d_cot_risk_isr_projection(cross: pd.DataFrame, out_base: Path) 
             c="black",
             edgecolors="white",
             linewidths=0.8,
-            label="Selected balanced tuple",
+            label="Balanced pick",
             zorder=5,
         )
 
         ax.annotate(
             (
-                "Selected\n"
+                "Balanced pick\n"
                 f"α={balanced['alpha']:g}, β={balanced['beta']:g}, "
                 f"γ={balanced['gamma']:g}, δ={balanced['delta']:g}"
             ),
@@ -660,11 +845,11 @@ def plot_pareto_2d_cot_risk_isr_projection(cross: pd.DataFrame, out_base: Path) 
         )
 
     cbar = fig.colorbar(sc, ax=ax)
-    cbar.set_label("mean_ISR (↑)")
+    cbar.set_label("Mean ISR ↑")
 
-    ax.set_xlabel("mean_CoT (↓, over intents)")
-    ax.set_ylabel("mean_risk (↓, over intents)")
-    ax.set_title("2-D projection of Pareto front: mean_CoT vs mean_risk")
+    ax.set_xlabel("Mean CoT ↓")
+    ax.set_ylabel("Mean Risk ↓")
+    ax.set_title("2-D projection of Pareto front: Mean CoT vs Mean Risk")
 
     ax.grid(True, alpha=0.25)
     ax.legend(loc="best")
@@ -788,9 +973,9 @@ def plot_cross_intent_tradeoff_scatter(cross: pd.DataFrame, out_base: Path) -> N
         for _, r in top10.iterrows():
             lbl = format_weights(r["alpha"], r["beta"], r["gamma"], r["delta"])
             ax.annotate(lbl, (r["mean_cot"], r["mean_isr"]), fontsize=6, xytext=(3, 3), textcoords="offset points")
-    ax.set_xlabel("mean_cot (↓, mean over intents)")
-    ax.set_ylabel("mean_isr (↑, mean over intents)")
-    ax.set_title("Pareto front over (α,β,γ,δ): mean CoT vs mean ISR")
+    ax.set_xlabel("Mean CoT ↓")
+    ax.set_ylabel("Mean ISR ↑")
+    ax.set_title("Pareto front over (α,β,γ,δ): Mean CoT vs Mean ISR")
     fig.tight_layout()
     fig.savefig(out_base / "pareto_weights_mean_cot_mean_isr.png", bbox_inches="tight")
     plt.close(fig)
@@ -809,9 +994,9 @@ def plot_cross_intent_risk_isr_scatter(cross: pd.DataFrame, out_base: Path) -> N
         for _, r in top10.iterrows():
             lbl = format_weights(r["alpha"], r["beta"], r["gamma"], r["delta"])
             ax.annotate(lbl, (r["mean_risk"], r["mean_isr"]), fontsize=6, xytext=(3, 3), textcoords="offset points")
-    ax.set_xlabel("mean_risk (↓, mean over intents)")
-    ax.set_ylabel("mean_isr (↑, mean over intents)")
-    ax.set_title("Pareto front over (α,β,γ,δ): mean risk vs mean ISR")
+    ax.set_xlabel("Mean Risk ↓")
+    ax.set_ylabel("Mean ISR ↑")
+    ax.set_title("Pareto front over (α,β,γ,δ): Mean Risk vs Mean ISR")
     fig.tight_layout()
     fig.savefig(out_base / "pareto_weights_mean_risk_mean_isr.png", bbox_inches="tight")
     plt.close(fig)
@@ -1017,6 +1202,12 @@ def main() -> None:
         action="store_true",
         help="With --per-intent-pareto-plots, also write pareto_3d_<intent>.png per intent.",
     )
+    parser.add_argument(
+        "--balanced-pick",
+        type=str,
+        default=None,
+        help="Path to balanced_pick.json from the Pareto evaluator (default: sibling of --input).",
+    )
     args = parser.parse_args()
 
     in_path = Path(args.input)
@@ -1042,6 +1233,10 @@ def main() -> None:
     pareto_tbl = build_pareto_fronts_table(df)
     cross = build_cross_intent_selection(df)
     recs = select_recommended_tuples(cross)
+    bal_path = Path(args.balanced_pick) if args.balanced_pick else in_path.parent / "balanced_pick.json"
+    balanced_pick = load_balanced_pick(bal_path)
+    if balanced_pick is not None:
+        print(f"Using balanced pick from {bal_path}")
     weight_front = build_weight_pareto_front_table(cross)
     weight_front.to_csv(tables_dir / "weight_pareto_front.csv", index=False)
     save_markdown_table(weight_front, markdown_dir / "weight_pareto_front.md")
@@ -1067,8 +1262,8 @@ def main() -> None:
     )
 
     if not cross.empty:
-        plot_pareto_3d_weight_frontier(cross, figures_3d_dir)
-        plot_pareto_2d_cot_risk_isr_projection(cross, figures_dir)
+        plot_pareto_3d_weight_frontier(cross, figures_3d_dir, balanced=balanced_pick)
+        plot_pareto_2d_cot_risk_isr_projection(cross, figures_dir, balanced=balanced_pick)
         plot_cross_intent_tradeoff_scatter(cross, figures_dir)
         plot_cross_intent_risk_isr_scatter(cross, figures_dir)
 

@@ -1,5 +1,5 @@
 """
-단일 지형을 생성한 뒤, 여러 epoch 체크포인트 × 6 intent inference 결과를
+단일 지형을 생성한 뒤, 여러 epoch 체크포인트 × multi-intent inference 결과를
 그리드(행=epoch, 위에서부터 오래된 순; --epoch-step 배수만 사용, 열=intent)로 저장합니다.
 
 Usage (from diffusion_textguide/):
@@ -39,7 +39,7 @@ sys.path.insert(0, str(_ROOT / "scripts"))
 
 import only_generate_terrain as _ogt  # noqa: E402
 from data_loader import text_to_tokens  # noqa: E402
-from inference_6intent import (  # noqa: E402
+from inference_multi_intent import (  # noqa: E402
     INTENT_LABELS,
     INTENTS,
     load_model,

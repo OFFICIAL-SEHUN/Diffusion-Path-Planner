@@ -9,6 +9,7 @@ Run from repo root (with numpy/matplotlib):
 import json
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib import font_manager
 from pathlib import Path
 
 # Table 2 — Isaac Lab Go2 (35° trained policy, 1.0 m/s, 30 m runs)
@@ -20,6 +21,46 @@ MEASURED_Y = np.array(
 
 # np.polyfit returns highest-degree first: p[0]*x^4 + p[1]*x^3 + ... + p[4]
 _POLY_COEFFS_DESC = np.polyfit(MEASURED_X, MEASURED_Y, 4)
+
+
+def _configure_plot_font() -> None:
+    """Use Times New Roman for all figure text (serif fallback on Linux/Docker)."""
+    available = {f.name for f in font_manager.fontManager.ttflist}
+    if "Times New Roman" in available:
+        family = "Times New Roman"
+    else:
+        family = next(
+            (
+                name
+                for name in (
+                    "Times",
+                    "Nimbus Roman",
+                    "Liberation Serif",
+                    "STIXGeneral",
+                    "STIX Two Text",
+                    "DejaVu Serif",
+                )
+                if name in available
+            ),
+            "serif",
+        )
+        print(f"[Font] 'Times New Roman' not installed; using {family}")
+
+    plt.rcParams.update(
+        {
+            "font.family": family,
+            "font.serif": [
+                "Times New Roman",
+                "Times",
+                "Nimbus Roman",
+                "Liberation Serif",
+                "STIXGeneral",
+                "STIX Two Text",
+                "DejaVu Serif",
+            ],
+            "mathtext.fontset": "stix",
+        }
+    )
 
 
 def calculate_paper_cot(slope_deg):
@@ -64,19 +105,21 @@ def export_cot_model_json(slope_limit_deg: float = 25.0) -> Path:
 # --- plot (same as before, uses current polyfit) ---
 if __name__ == "__main__":
     export_cot_model_json()
+    _configure_plot_font()
 
     x_range = np.linspace(-25, 20, 400)
     y_cot = calculate_paper_cot(x_range)
 
     plt.figure(figsize=(10, 6))
-    plt.plot(x_range, y_cot, color="red", linewidth=2, label="Polynomial Fit (CoT)")
-    plt.scatter(MEASURED_X, MEASURED_Y, color="red", marker="^", s=80, label="Measured Data (IsaacSim)")
-    plt.title("CoT vs Inclination Angle", fontsize=14)
-    plt.xlabel("Inclination (deg)", fontsize=12)
-    plt.ylabel("Value (CoT)", fontsize=12)
-    plt.xticks(np.arange(-25, 21, 5))
+    plt.plot(x_range, y_cot, color="red", linewidth=4, label="Fitted CoT model")
+    plt.scatter(MEASURED_X, MEASURED_Y, color="red", marker="^", s=80, label="Measured CoT")
+    plt.title("Slope vs CoT", fontsize=27)
+    plt.xlabel("Slope angle (deg)", fontsize=21)
+    plt.ylabel("Cost of transport", fontsize=21)
+    plt.xticks(np.arange(-25, 21, 5), fontsize=21)
+    plt.yticks(fontsize=21)
     plt.grid(True, linestyle="--", alpha=0.6)
-    plt.legend()
+    plt.legend(fontsize=15)
 
     out_path = Path(__file__).resolve().parent / "cot_plot.png"
     plt.tight_layout()

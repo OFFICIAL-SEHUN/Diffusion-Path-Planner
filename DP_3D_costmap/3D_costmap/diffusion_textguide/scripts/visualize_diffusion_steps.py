@@ -50,7 +50,7 @@ from text_conditioning import (  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
-# Model loading (mirrors inference_6intent.load_model with text_features flow)
+# Model loading (mirrors inference_multi_intent.load_model with text_features flow)
 # ---------------------------------------------------------------------------
 def _resolve_text_encoder_type(m_cfg: dict, state_dict: dict) -> str:
     raw = m_cfg.get("text_encoder_type")

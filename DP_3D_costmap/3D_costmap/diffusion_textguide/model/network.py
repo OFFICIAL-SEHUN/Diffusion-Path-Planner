@@ -288,7 +288,7 @@ class ConditionalPathModel(nn.Module):
                  convnext_pretrained: Optional[bool] = None,
                  input_img_size: Optional[int] = None,
                  text_encoder_type: str = "learnable",
-                 num_intents: int = 14,
+                 num_intents: int = 10,
                  text_feature_dim: int = 256):
         super().__init__()
         time_dim = dim * 4
